@@ -98,14 +98,14 @@ loadVoices(); try { synth && synth.addEventListener("voiceschanged", loadVoices)
 const hasVi = () => voices.some(v => /^vi/i.test(v.lang));
 // Female voice with a neutral English accent: clear US/UK standard voices first, natural (neural) voices preferred.
 const FEMALE = /female|woman|aria|jenny|ava|emma|michelle|sonia|libby|hazel|zira|susan|samantha|allison|karen|moira|tessa|serena|kate|victoria|joanna|salli|kendra|kimberly|ivy|amy|nova|shimmer|hoai|linh|my\b/i;
-// Female American (en-US) voices with a neutral, General American accent. Natural (neural) voices first.
-const VOICE_PREFS = [/jenny.*natural/i, /aria.*natural/i, /ava.*natural/i, /michelle.*natural/i, /google us english/i, /samantha/i, /\bava\b/i, /allison/i, /susan/i, /microsoft (jenny|aria|ava|michelle)/i, /zira/i, /joanna|salli|kendra|kimberly|ivy/i];
+const VOICE_PREFS = [/jenny.*natural|aria.*natural|ava.*natural|emma.*natural/i, /google us english/i, /samantha/i, /sonia.*natural|libby.*natural/i, /google uk english female/i, /microsoft (jenny|aria|ava|emma|zira)/i, /allison|ava|susan/i, /microsoft (libby|sonia|hazel|susan)/i, /karen|serena|kate|tessa|moira/i];
 let _ev = null;
 function englishVoice() {
   if (_ev && voices.includes(_ev)) return _ev;
-  const us = voices.filter(v => /^en[-_]US/i.test(v.lang));
-  for (const re of VOICE_PREFS) { const v = us.find(v => re.test(v.name)); if (v) return (_ev = v); }
-  return (_ev = us.find(v => FEMALE.test(v.name)) || us[0] || voices.find(v => /^en/i.test(v.lang)) || null);
+  const en = voices.filter(v => /^en[-_]/i.test(v.lang));
+  const std = en.filter(v => /^en[-_](US|GB)/i.test(v.lang));
+  for (const re of VOICE_PREFS) { const v = std.find(v => re.test(v.name)) || en.find(v => re.test(v.name)); if (v) return (_ev = v); }
+  return (_ev = std.find(v => FEMALE.test(v.name) && !/male\b(?<!female)/i.test(v.name)) || en.find(v => FEMALE.test(v.name)) || std[0] || en[0] || null);
 }
 function clean(t) { return String(t).replace(/\p{Extended_Pictographic}|️|‍/gu, " ").replace(/\s*\|\s*/g, ", ").replace(/×/g, " times ").replace(/÷/g, " divided by ").replace(/\s+/g, " ").trim(); }
 function speak(text, lang = "en", btn) {
@@ -114,7 +114,7 @@ function speak(text, lang = "en", btn) {
     synth.cancel();
     const u = new SpeechSynthesisUtterance(lang === "vi" ? String(text).replace(/\p{Extended_Pictographic}|️/gu, " ") : clean(text));
     const v = lang === "vi" ? (voices.find(v => /^vi/i.test(v.lang) && FEMALE.test(v.name)) || voices.find(v => /^vi/i.test(v.lang))) : englishVoice();
-    if (v) u.voice = v; u.lang = lang === "vi" ? (v ? v.lang : "vi-VN") : "en-US"; u.rate = .88; u.pitch = 1;
+    if (v) u.voice = v; u.lang = v ? v.lang : (lang === "vi" ? "vi-VN" : "en-US"); u.rate = .88; u.pitch = 1;
     if (btn) { btn.classList.add("talking"); u.onend = u.onerror = () => btn.classList.remove("talking"); }
     synth.speak(u);
   } catch {}
