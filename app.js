@@ -1195,9 +1195,9 @@ function loadResults(key, quiet) {
   const cb = "__msres" + Date.now(), sc = document.createElement("script");
   const done = (data, err) => { clearTimeout(timer); delete window[cb]; sc.remove(); RS.loading = false;
     if (data && data.ok) { RS.data = data; RS.err = ""; store.set("tkey", key); }
-    if (RS.after) { const f = RS.after; RS.after = null; f(); }
     else if (data && data.error === "key") { RS.err = "That teacher key is not right. Check it and try again."; RS.data = null; store.set("tkey", ""); }
     else if (!quiet || !RS.data) RS.err = err || "Couldn't load the results.";
+    if (RS.after) { const f = RS.after; RS.after = null; f(); }
     if (S.view === "results") render(); };
   const timer = setTimeout(() => done(null, "The results took too long to load. Check your internet and press Refresh."), 25000);
   window[cb] = d => done(d);
@@ -1214,6 +1214,15 @@ const stuKey = r => `${r.name}|${r.cls}|${r.code}`.toLowerCase();
 function resHero(sub) {
   return `<div class="rhero card"><div><div class="eyebrow">Teacher only</div><h1>Class results</h1><p>${sub}</p></div>
     <div class="rhero-art" aria-hidden="true"><span class="a1">📚</span><span class="a2">🏆</span><span class="a3">⭐</span><span class="a4">✨</span><span class="a5">🏅</span><span class="a6">🧮</span></div></div>`;
+}
+function deleteResults(items, label) {
+  const url = TRACK_URL(), key = store.get("tkey", ""); if (!url || !key) return;
+  toast("Deleting…");
+  const gone = () => !(RS.data.students || []).some(s => items.some(it => `${s.name}|${s.cls}`.toLowerCase() === `${it.name}|${it.cls}`.toLowerCase() && (!it.code || it.code === s.code)));
+  fetch(url, { method: "POST", mode: "no-cors", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ action: "delete", key, items }) })
+    .then(() => new Promise(r => setTimeout(r, 1500)))
+    .then(() => { RS.after = () => { if (!RS.data) return; if (gone()) { tone("good"); toast(`Deleted ${label}'s results.`); } else toast("⚠️ It didn't delete. Update your Google script to the newest version, then try again.", 6000); }; loadResults(key, true); })
+    .catch(() => toast("⚠️ Couldn't delete. Check your internet."));
 }
 function renderResults(m) {
   $("#starCount").classList.add("hidden"); $("#whoBtn").classList.add("hidden");
@@ -1288,7 +1297,7 @@ function renderResults(m) {
         let det = "";
         if (open) {
           const evs = (D.events || []).filter(e => stuKey(e) === id).sort((a, b) => (Date.parse(b.time) || 0) - (Date.parse(a.time) || 0)).slice(0, 40);
-          det = `<tr class="rdetail"><td colspan="6"><div class="rsteps">${STEP.map((l, i) => `<span class="${r.steps[i] ? "on" : ""}">${r.steps[i] ? "✔" : "○"} ${l}</span>`).join("")}</div>${evs.length ? `<ul class="tl">${evs.map(e => `<li><span class="small">${esc(fmtTime(e.time))}</span> ${esc(e.what)}${e.task && e.task !== "Started" && e.task !== "Learn" && e.task !== "Practice" && e.task !== "Quiz" ? " · " + esc(e.task) : ""}${e.score ? " · " + esc(e.score) : ""}${Number(e.stars) ? " · " + "★".repeat(Math.min(3, Number(e.stars))) : ""}</li>`).join("")}</ul>` : `<div class="small muted">No details yet.</div>`}</td></tr>`;
+          det = `<tr class="rdetail"><td colspan="6"><div class="rdel"><button class="btn btn-ghost btn-sm" data-del1="${esc(id)}">🗑 Delete this result</button><button class="btn btn-ghost btn-sm" data-delall="${esc(id)}">🗑 Delete all of ${esc(r.name)}'s results</button></div><div class="rsteps">${STEP.map((l, i) => `<span class="${r.steps[i] ? "on" : ""}">${r.steps[i] ? "✔" : "○"} ${l}</span>`).join("")}</div>${evs.length ? `<ul class="tl">${evs.map(e => `<li><span class="small">${esc(fmtTime(e.time))}</span> ${esc(e.what)}${e.task && e.task !== "Started" && e.task !== "Learn" && e.task !== "Practice" && e.task !== "Quiz" ? " · " + esc(e.task) : ""}${e.score ? " · " + esc(e.score) : ""}${Number(e.stars) ? " · " + "★".repeat(Math.min(3, Number(e.stars))) : ""}</li>`).join("")}</ul>` : `<div class="small muted">No details yet.</div>`}</td></tr>`;
         }
         return `<tr class="rrow ${open ? "open" : ""}" data-id="${esc(id)}" tabindex="0"><td><b>${esc(r.name)}</b> <span class="caret">${open ? "▴" : "▾"}</span></td>
           <td><div class="pbar"><i style="width:${r.done * 25}%"></i></div><span class="small muted">${r.done} / 4 parts</span></td>
@@ -1311,6 +1320,14 @@ function renderResults(m) {
             ${chip(rs.length + " student" + (rs.length === 1 ? "" : "s"))}${chip(rs.filter(r => r.done === 4).length + " finished", "good")}${chip(q.length + " did the quiz")}${av != null ? chip("Quiz avg " + av + "%", pctLvl(av)) : ""}</div>${table(rs)}</div>`; }).join("")}</section>`;
     }).join("");
     $$("[data-sort]", G).forEach(b => b.onclick = () => { const k = b.dataset.sort; if (RS.sort === k) RS.dir = -RS.dir; else { RS.sort = k; RS.dir = k === "name" ? 1 : -1; } paint(); });
+    const byId = id => all.find(r => stuKey(r) === id);
+    $$("[data-del1],[data-delall]", G).forEach(b => b.onclick = async ev => {
+      ev.stopPropagation(); const r = byId(b.dataset.del1 || b.dataset.delall); if (!r) return; const one = !!b.dataset.del1;
+      const ok = await askConfirm(one ? `Delete ${r.name}'s result?` : `Delete all of ${r.name}'s results?`,
+        one ? `${r.name} (${r.cls}) will be removed from "${r.title}" and from the leaderboard. This can't be undone.` : `Every result for ${r.name} (${r.cls}), in every activity, will be removed, including the leaderboard. This can't be undone.`, "Delete");
+      if (!ok) return;
+      deleteResults([{ name: r.name, cls: r.cls, code: one ? r.code : "" }], `${r.name}`);
+    });
     $$(".rrow", G).forEach(tr => { tr.onclick = () => { RS.open[tr.dataset.id] = !RS.open[tr.dataset.id]; paint(); }; tr.onkeydown = e => { if (e.key === "Enter") tr.click(); }; });
     $$("[data-cls]", G).forEach(b => b.onclick = () => { const k = "cls:" + b.dataset.cls; RS.open[k] = RS.open[k] === false ? true : false; paint(); });
   }

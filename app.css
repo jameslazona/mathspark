@@ -449,6 +449,7 @@ body[data-theme=space] .sky{background:linear-gradient(180deg,#0f0c2e,#2a1f66)}
 .pbar i{display:block;height:100%;background:var(--primary);border-radius:9px}
 .gicons span{font-size:19px;margin-right:2px}
 .rdetail td{background:#f8fafc;white-space:normal}
+.rdel{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end;float:right;margin:0 0 6px 10px}.rdel .btn{color:#b91c1c}
 .rsteps{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
 .rsteps span{font-size:13px;font-weight:800;padding:3px 10px;border-radius:999px;background:#fff;border:1px solid #e5e7eb;color:#6b7280}
 .rsteps span.on{background:#dcfce7;border-color:#bbf7d0;color:#166534}
