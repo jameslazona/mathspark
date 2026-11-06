@@ -36,6 +36,7 @@ const S = {
 if (!THEMES[S.theme]) S.theme = "jungle";
 
 function bi(en) { return esc(en); }
+function biL(en, vi, inline) { if (!vi) return esc(en); return inline ? `${esc(en)} <span class="vi-inline">· ${esc(vi)}</span>` : `${esc(en)}<span class="vi">${esc(vi)}</span>`; }
 function biV(en, vi) { return vi ? `${esc(en)}<span class="vi">${esc(vi)}</span>` : esc(en); }
 function toast(msg, ms = 2600) {
   const t = $("#toast"); t.textContent = msg; t.classList.add("show");
@@ -107,7 +108,7 @@ function englishVoice() {
   for (const re of VOICE_PREFS) { const v = us.find(v => re.test(v.name)); if (v) return (_ev = v); }
   return (_ev = us.find(v => FEMALE.test(v.name)) || us[0] || voices.find(v => /^en/i.test(v.lang)) || null);
 }
-function clean(t) { return String(t).replace(/\p{Extended_Pictographic}|️|‍/gu, " ").replace(/\s*\|\s*/g, ", ").replace(/×/g, " times ").replace(/÷/g, " divided by ").replace(/\s+/g, " ").trim(); }
+function clean(t) { return String(t).replace(/\p{Extended_Pictographic}|️|‍/gu, " ").replace(/\s*\|\s*/g, ", ").replace(/\s*\+\s*/g, " plus ").replace(/\s*=\s*/g, " equals ").replace(/×/g, " times ").replace(/÷/g, " divided by ").replace(/\s+/g, " ").trim(); }
 function speak(text, lang = "en", btn) {
   if (!synth) { toast("Read aloud isn't available on this device."); return; }
   try {
@@ -235,11 +236,11 @@ function mascotSVG() {
     <ellipse class="m-o" cx="50" cy="84" rx="5" ry="6" fill="#1f2937"/>
   </svg>`;
 }
-function guideHTML(en, vi) { return `<div class="guide"><div class="mascot" id="mascot">${mascotSVG()}</div><div class="bubble" id="bubble">${bi(en, vi)}</div></div>`; }
+function guideHTML(en, vi) { return `<div class="guide"><div class="mascot" id="mascot">${mascotSVG()}</div><div class="bubble" id="bubble">${S.view === "player" && S.tab === "learn" ? biL(en, vi) : bi(en, vi)}</div></div>`; }
 function setGuide(state, en, vi) {
   const m = $("#mascot"), b = $("#bubble");
   if (m) { m.className = "mascot"; void m.offsetWidth; if (state) m.classList.add(state); clearTimeout(setGuide._t); setGuide._t = setTimeout(() => m && (m.className = "mascot"), 1600); }
-  if (b && en) { b.innerHTML = bi(en, vi); b.style.animation = "none"; void b.offsetWidth; b.style.animation = ""; }
+  if (b && en) { b.innerHTML = S.view === "player" && S.tab === "learn" ? biL(en, vi) : bi(en, vi); b.style.animation = "none"; void b.offsetWidth; b.style.animation = ""; }
 }
 
 /* ===================== answer checking ===================== */
@@ -277,7 +278,8 @@ function sanitizeVisual(v) {
   if (!v || typeof v !== "object") return null;
   const em = e => { const s = String(e || "").trim(); return s && [...s].length <= 4 ? s : "🔵"; };
   switch (v.type) {
-    case "groups": { const g = (Array.isArray(v.groups) ? v.groups : []).slice(0, 3).map(n => int(n, 0, 12) ?? 0); return g.length && g.some(n => n > 0) ? { type: "groups", emoji: em(v.emoji), groups: g, style: v.style === "circles" ? "circles" : "" } : null; }
+    case "groups": { const g = (Array.isArray(v.groups) ? v.groups : []).slice(0, 3).map(n => int(n, 0, 12) ?? 0); const ems = Array.isArray(v.emojis) ? v.emojis.slice(0, 3).map(em) : null;
+      return g.length && g.some(n => n > 0) ? { type: "groups", emoji: em(v.emoji || ems?.[0]), emojis: ems, groups: g, style: v.style === "circles" ? "circles" : "" } : null; }
     case "partwhole": { const p = Array.isArray(v.parts) ? v.parts.slice(0, 3) : []; if (p.length < 2) return null; return { type: "partwhole", whole: numOrNull(v.whole, 0, 100000), parts: p.map(x => numOrNull(x, 0, 100000)) }; }
     case "tenframe": { const c = int(v.count, 0, 20); return c == null ? null : { type: "tenframe", count: c }; }
     case "numberline": { const mn = Number(v.min), mx = Number(v.max); if (!Number.isFinite(mn) || !Number.isFinite(mx) || mx <= mn || mx - mn > 1000) return null;
@@ -293,6 +295,8 @@ function sanitizeVisual(v) {
         spots: (v.spots || []).slice(0, 20).map(p => ({ x: pct(p.x), y: pct(p.y) })),
         rings: (v.rings || []).slice(0, 3).map(r => ({ x: pct(r.x), y: pct(r.y), w: pct(r.w), h: pct(r.h), color: /^#[0-9a-f]{3,6}$/i.test(r.color || "") ? r.color : "#dc2626" })) };
     }
+    case "sentence": { const it = (Array.isArray(v.items) ? v.items : []).slice(0, 9).map(x => x === null || x === "?" ? null : ["+", "−", "-", "=", "×", "÷"].includes(x) ? (x === "-" ? "−" : x) : (Number.isFinite(Number(x)) ? Number(x) : undefined)).filter(x => x !== undefined); return it.length >= 3 ? { type: "sentence", items: it } : null; }
+    case "mixed": { const it = (Array.isArray(v.items) ? v.items : []).slice(0, 3).map(x => [em(x?.[0]), int(x?.[1], 0, 10) ?? 0]).filter(x => x[1] > 0); return it.length ? { type: "mixed", items: it } : null; }
     case "shapes": { const it = (v.items || []).map(s => String(s).toLowerCase()).filter(s => SHAPES.includes(s)).slice(0, 6); return it.length ? { type: "shapes", items: it } : null; }
   }
   return null;
@@ -304,13 +308,18 @@ function renderVisual(v) {
   switch (v.type) {
     case "groups":
       const circ = v.style === "circles" || S.current?.data?.groupStyle === "circles";
-      h = `<div class="vgroups" data-count>${v.groups.map((n, g) => `<div class="hoop h${g} ${circ ? "circ" : ""}">${n ? Array.from({ length: n }, () => `<button class="obj" data-obj>${esc(v.emoji)}</button>`).join("") : `<span class="muted" style="font-weight:900">0</span>`}</div>`).join("")}</div>
+      h = `<div class="vgroups" data-count>${v.groups.map((n, g) => `<div class="hoop h${g} ${circ ? "circ" : ""}">${n ? Array.from({ length: n }, () => `<button class="obj" data-obj>${esc(v.emojis?.[g] || v.emoji)}</button>`).join("") : `<span class="muted" style="font-weight:900">0</span>`}</div>`).join("")}</div>
         <div class="vhint">👆 ${bi("Tap to count", "Chạm để đếm", true)} <button data-reset>↺</button></div>`; break;
     case "tenframe": {
       const frames = v.count > 10 ? 2 : 1;
       h = `<div class="row" data-count style="justify-content:center">${Array.from({ length: frames }, (_, f) => `<div class="tf-grid">${Array.from({ length: 10 }, (_, i) => { const k = f * 10 + i; return k < v.count ? `<button class="tf-cell" data-obj><i></i></button>` : `<span class="tf-cell"></span>`; }).join("")}</div>`).join("")}</div>
         <div class="vhint">👆 ${bi("Tap to count", "Chạm để đếm", true)} <button data-reset>↺</button></div>`; break;
     }
+    case "sentence":
+      h = `<div class="sent">${v.items.map(x => typeof x === "number" ? `<span class="sbox">${fmt(x)}</span>` : x === null ? `<span class="sbox q">?</span>` : `<span class="sop">${esc(x)}</span>`).join("")}</div>`; break;
+    case "mixed":
+      h = `<div class="vgroups" data-count><div class="hoop circ mixed">${v.items.map(([e, n]) => Array.from({ length: n }, () => `<button class="obj" data-obj>${esc(e)}</button>`).join("")).join("")}</div></div>
+        <div class="vhint">👆 Tap to count <button data-reset>↺</button></div>`; break;
     case "image":
       h = `<div class="vimg" data-count><img src="${v.src}" alt="${esc(v.alt)}" draggable="false">
         ${v.rings.map(r => `<span class="ring" style="left:${r.x - r.w / 2}%;top:${r.y - r.h / 2}%;width:${r.w}%;height:${r.h}%;border-color:${r.color}"></span>`).join("")}
@@ -411,7 +420,7 @@ function sanitize(a) {
       match: arr(a.games?.match).map(m => ({ left: str(m.left), right: str(m.right), visual: sanitizeVisual(m.visual) })).filter(m => m.left && m.right),
       speed: arr(a.games?.speed).map(s => ({ q: str(s.q), answers: arr(s.answers).map(str).filter(Boolean), visual: sanitizeVisual(s.visual) })).filter(s => s.q && s.answers.length),
       truefalse: arr(a.games?.truefalse).map(t => ({ statement: str(t.statement), statement_vi: str(t.statement_vi), answer: t.answer === true || t.answer === "true", why: str(t.why), why_vi: str(t.why_vi), visual: sanitizeVisual(t.visual) })).filter(t => t.statement),
-      circles: arr(a.games?.circles).map(c => ({ total: int(c?.total, 2, 10), emoji: [...str(c?.emoji)].length && [...str(c?.emoji)].length <= 4 ? str(c.emoji) : "🔴" })).filter(c => c.total).slice(0, 8),
+      circles: arr(a.games?.circles).map(c => ({ total: int(c?.total, 2, 10), frame: ["sentence", "whole-first"].includes(c?.frame) ? c.frame : "parts", emoji: [...str(c?.emoji)].length && [...str(c?.emoji)].length <= 4 ? str(c.emoji) : "🔴" })).filter(c => c.total).slice(0, 8),
       model: arr(a.games?.model).map(m => { const v = sanitizeVisual({ type: "partwhole", whole: m?.whole, parts: m?.parts }); if (!v) return null;
         const nulls = [v.whole, ...v.parts].filter(x => x == null).length; if (nulls !== 1 || ![v.whole, ...v.parts].every(x => x == null || Number.isInteger(x))) return null;
         const known = v.parts.filter(x => x != null).reduce((a, b) => a + b, 0), ans = v.whole == null ? known : v.whole - known; return ans >= 0 ? { whole: v.whole, parts: v.parts, ans } : null; }).filter(Boolean).slice(0, 12),
@@ -422,6 +431,7 @@ function sanitize(a) {
     }).filter(q => q.question && q.choices.length >= 2 && q.answer >= 0 && q.answer < q.choices.length),
   };
   const pg = a.playground;
+  if (pg && pg.kind === "flip") { const t = int(pg.total, 2, 10); if (t) out.playground = { kind: "flip", total: t }; }
   if (pg && pg.kind === "split") { const t = int(pg.total, 2, 10); if (t) out.playground = { kind: "split", style: pg.style === "circles" ? "circles" : "", total: t, emoji: [...str(pg.emoji)].length && [...str(pg.emoji)].length <= 4 ? str(pg.emoji) : "🔴" }; }
   const seenL = new Set(), seenR = new Set();
   out.games.match = out.games.match.filter(m => { const l = norm(m.left), r = norm(m.right); if (seenL.has(l) || seenR.has(r)) return false; seenL.add(l); seenR.add(r); return true; }).slice(0, 8);
@@ -611,7 +621,7 @@ function renderCreate(m) {
       </div>
       <label class="f">AI quality</label>
       <select id="oQuality"><option value="default" ${opt.quality === "default" ? "selected" : ""}>Standard (faster)</option><option value="complex" ${opt.quality === "complex" ? "selected" : ""}>Best (slower, more careful)</option></select>
-      <label class="check"><input type="checkbox" id="oVi" ${opt.vi ? "checked" : ""}> Add Vietnamese to the Key words</label>
+      <label class="check"><input type="checkbox" id="oVi" ${opt.vi ? "checked" : ""}> Add Vietnamese to Key words and Learn</label>
       <div style="margin-top:18px"><button class="btn btn-primary btn-lg" id="buildBtn" style="width:100%" disabled>✨ Build activity</button></div>
       ${S.imgMax ? "" : `<p class="small muted" style="margin-top:8px">Pictures can't be sent to the AI in this view, so only text in your files will be read.</p>`}
       <div id="status"></div>
@@ -791,7 +801,7 @@ async function startBuild() {
 function buildPrompt(o, extra, source, imgLabels) {
   const diff = { easy: "easier than the book (more support, smaller numbers)", on: "at the same level as the book", hard: "slightly more challenging than the book (more multi-step and word problems)" }[o.diff];
   const vi = o.vi
-    ? `Vietnamese goes ONLY in the vocabulary: fill each vocabulary "term_vi" and "meaning_vi" with natural, accurate Vietnamese using the standard math words Vietnamese textbooks use (e.g. phân số, mẫu số, phép cộng, chu vi, diện tích). Everything else is English only: leave every other *_vi field as "". Students are Vietnamese children with low English, so keep English simple.`
+    ? `Vietnamese goes ONLY in the vocabulary and the Learn content: fill vocabulary "term_vi" and "meaning_vi", "title_vi", "summary_vi", and in every concept "title_vi", "explain_vi", example "problem_vi" and each step's "vi", with natural, accurate Vietnamese using the standard math words Vietnamese textbooks use (e.g. phân số, mẫu số, phép cộng, chu vi, diện tích; address children as "em"). Practice, games and quiz are English only: leave every other *_vi field as "". Students are Vietnamese children with low English, so keep English simple.`
     : `English only: leave every *_vi field as "".`;
   return `You are an expert primary and lower-secondary math teacher building a fun, interactive, picture-rich practice activity for ${o.grade} students at a bilingual school in Vietnam.
 
@@ -811,7 +821,7 @@ RULES
 - If the material has no math content at all, reply {"error":"short reason"} instead.
 
 VISUALS — young children learn from pictures, so add a "visual" to MOST practice items, quiz questions and every concept example where a picture fits. The question text must make sense together with the visual. If the question asks for a number, do not show that number in the visual (use null, which shows "?"). Allowed visuals:
-- {"type":"groups","emoji":"🐸","groups":[3,2],"style":"circles"}  objects in 1–3 groups (0–12 each); children tap them to count; "style":"circles" draws plain red circles like the book, "" draws red/blue hoops. When you say "first circle"/"second circle" use circles; only say "red hoop"/"blue hoop" with the hoop style
+- {"type":"groups","emoji":"🐸","groups":[3,2],"style":"circles"} (or "emojis":["🍏","🍌"] for a different object in each group)  objects in 1–3 groups (0–12 each); children tap them to count; "style":"circles" draws plain red circles like the book, "" draws red/blue hoops. When you say "first circle"/"second circle" use circles; only say "red hoop"/"blue hoop" with the hoop style
 - {"type":"partwhole","whole":6,"parts":[2,null]}  part-whole (cherry) model; 2 or 3 parts; null shows "?"
 - {"type":"tenframe","count":7}  ten frame(s), 0–20 counters
 - {"type":"numberline","min":0,"max":10,"marks":[3],"jumps":[{"from":3,"to":7}]}
@@ -820,13 +830,15 @@ VISUALS — young children learn from pictures, so add a "visual" to MOST practi
 - {"type":"array","rows":3,"cols":4,"emoji":"🍎"}  up to 10×10
 - {"type":"clock","h":3,"m":30}
 - {"type":"shapes","items":["triangle","square"]}  from circle, square, triangle, rectangle, pentagon, hexagon, oval, star
+- {"type":"sentence","items":[2,"+",3,"=",null]}  a number sentence in yellow boxes like the book; null shows "?"; also "whole first" like [null,"=",2,"+",3]
+- {"type":"mixed","items":[["🔴",4],["🟡",2]]}  two or three kinds of counters mixed in ONE circle (e.g. double-sided counters)
 Emoji pictures in the question text (like 🍎🍎🍎) are also fine for very young learners.
 
 GAMES WITH MODELS — games can show visuals too: a match item's "visual" replaces its left text on the card (keep "left" as a short text label), and speed and truefalse items may have a "visual". When the lesson uses a part-whole model, number bonds, addition or subtraction, fill "games.model" with 10 part-whole puzzles that each have exactly ONE null (the missing whole or part), numbers from the lesson's range, and use partwhole visuals in many speed, truefalse and match items. Otherwise "model": [].
 
-TWO CIRCLES GAME — when the lesson is about parts and wholes, grouping, sorting into 2 groups, number bonds or addition within 10, fill "games.circles" with 6 sets of objects (total 3–10, one emoji each); children drag them into two empty circles and complete "☐ is a part. ☐ is a part. The whole is ☐." Otherwise "circles": [].
+TWO CIRCLES GAME — each set may have "frame": "parts" (☐ is a part. ☐ is a part. The whole is ☐.), "sentence" (☐ + ☐ = ☐) or "whole-first" (☐ = ☐ + ☐); use "sentence"/"whole-first" when the lesson teaches number sentences or number bonds. When the lesson is about parts and wholes, grouping, sorting into 2 groups, number bonds or addition within 10, fill "games.circles" with 6 sets of objects (total 3–10, one emoji each); children drag them into two empty circles and complete "☐ is a part. ☐ is a part. The whole is ☐." Otherwise "circles": [].
 
-PLAYGROUND — if the topic is number bonds, part-whole, addition or subtraction within 10, include "playground":{"kind":"split","total":N,"emoji":"🔴"} with N = 4–10 from the lesson (children move counters between two hoops). Otherwise set "playground": null.
+PLAYGROUND — if the topic is number bonds, part-whole, addition or subtraction within 10, include "playground":{"kind":"split","total":N,"emoji":"🔴"} (move objects between two circles) or {"kind":"flip","total":N} (flip red/yellow double-sided counters in one circle — best for number bonds) with N = 4–10 from the lesson (children move counters between two hoops). Otherwise set "playground": null.
 
 Reply with ONLY one JSON object in exactly this shape:
 {
@@ -843,7 +855,7 @@ Reply with ONLY one JSON object in exactly this shape:
    "speed": [ {"q":"","answers":[""],"visual":{...} or null} ],
    "truefalse": [ {"statement":"","statement_vi":"","answer":true,"why":"","why_vi":"","visual":{...} or null} ],
    "model": [ {"whole":6,"parts":[2,null]} ],
-   "circles": [ {"total":4,"emoji":"🟥"} ]
+   "circles": [ {"total":4,"emoji":"🟥","frame":"parts"} ]
  },
  "quiz": [ {"question":"","question_vi":"","visual":{...} or null,"choices":["","","",""],"answer":0,"explain":"","explain_vi":""} ]
 }
@@ -1001,18 +1013,18 @@ const refreshTabs = () => { const p = prog(S.current.id); const done = { learn: 
 /* ---------- learn ---------- */
 function renderLearn(p, d) {
   p.innerHTML = `
-  ${d.summary ? `<div class="card sec"><div class="row" style="font-size:19px;font-weight:800"><span style="font-size:30px">🎯</span><div style="flex:1">${bi(d.summary, d.summary_vi)}</div>${sayBtn(d.summary, d.summary_vi)}</div></div>` : ""}
-  ${d.vocabulary.length ? `<div class="card sec"><h2>🔤 Key words <span class="vi-inline">· Từ vựng</span></h2><p class="small muted" style="margin:-4px 0 12px">${bi("Tap a card to flip it.", "Chạm vào thẻ để lật.", true)}</p>
+  ${d.summary ? `<div class="card sec"><div class="row" style="font-size:19px;font-weight:800"><span style="font-size:30px">🎯</span><div style="flex:1">${biL(d.summary, d.summary_vi)}</div>${sayBtn(d.summary, d.summary_vi, true)}</div></div>` : ""}
+  ${d.vocabulary.length ? `<div class="card sec"><h2>🔤 Key words <span class="vi-inline">· Từ vựng</span></h2><p class="small muted" style="margin:-4px 0 12px">${biL("Tap a card to flip it.", "Chạm vào thẻ để lật.", true)}</p>
     <div class="vocab">${d.vocabulary.map(v => `<div class="vcard"><div class="vinner">
       <div class="vface vfront">${v.emoji ? `<span class="em">${esc(v.emoji)}</span>` : ""}<b>${esc(v.term)}</b>${v.term_vi ? `<span class="vi">${esc(v.term_vi)}</span>` : ""}<div>${sayBtn(v.term, v.term_vi, true)}</div></div>
       <div class="vface vback"><div>${biV(v.meaning, v.meaning_vi)}</div><div>${sayBtn(v.meaning, v.meaning_vi, true)}</div></div></div></div>`).join("")}</div></div>` : ""}
-  ${d.concepts.map((c, ci) => `<div class="card concept"><h3>${["💡", "🧠", "🔍", "⭐"][ci % 4]} ${bi(c.title, c.title_vi, true)}</h3><div class="row" style="align-items:flex-start;flex-wrap:nowrap"><div style="flex:1">${bi(c.explain, c.explain_vi)}</div>${sayBtn(c.explain, c.explain_vi)}</div>
-    ${c.example ? `<div class="example"><div class="small" style="font-weight:900;color:var(--c-learn-d)">${bi("Example", "Ví dụ", true)}</div><div class="q row" style="flex-wrap:nowrap;align-items:flex-start"><div style="flex:1">${bi(c.example.problem, c.example.problem_vi)}</div>${sayBtn(c.example.problem, c.example.problem_vi)}</div>
+  ${d.concepts.map((c, ci) => `<div class="card concept"><h3>${["💡", "🧠", "🔍", "⭐"][ci % 4]} ${biL(c.title, c.title_vi, true)}</h3><div class="row" style="align-items:flex-start;flex-wrap:nowrap"><div style="flex:1">${biL(c.explain, c.explain_vi)}</div>${sayBtn(c.explain, c.explain_vi, true)}</div>
+    ${c.example ? `<div class="example"><div class="small" style="font-weight:900;color:var(--c-learn-d)">${biL("Example", "Ví dụ", true)}</div><div class="q row" style="flex-wrap:nowrap;align-items:flex-start"><div style="flex:1">${biL(c.example.problem, c.example.problem_vi)}</div>${sayBtn(c.example.problem, c.example.problem_vi, true)}</div>
       ${renderVisual(c.example.visual)}
-      <ol class="stepper" id="st${ci}">${c.example.steps.map(s => `<li><div style="flex:1">${bi(s.en, s.vi)}</div>${sayBtn(s.en, s.vi)}</li>`).join("")}</ol>
-      <div class="row" style="margin-top:10px"><button class="btn btn-accent btn-sm" data-step="${ci}">👣 ${bi("Next step", "Bước tiếp theo", true)}</button><span class="ans hidden" id="ans${ci}">✓ ${esc(c.example.answer)}</span></div></div>` : ""}</div>`).join("")}
+      <ol class="stepper" id="st${ci}">${c.example.steps.map(s => `<li><div style="flex:1">${biL(s.en, s.vi)}</div>${sayBtn(s.en, s.vi, true)}</li>`).join("")}</ol>
+      <div class="row" style="margin-top:10px"><button class="btn btn-accent btn-sm" data-step="${ci}">👣 ${biL("Next step", "Bước tiếp theo", true)}</button><span class="ans hidden" id="ans${ci}">✓ ${esc(c.example.answer)}</span></div></div>` : ""}</div>`).join("")}
   ${d.playground ? `<div id="pgWrap"></div>` : ""}
-  <div class="row" style="justify-content:center;margin-top:10px"><button class="btn btn-primary btn-lg" id="learnDone">✅ ${bi("I'm ready to practise!", "Em sẵn sàng luyện tập!", true)}</button></div>`;
+  <div class="row" style="justify-content:center;margin-top:10px"><button class="btn btn-primary btn-lg" id="learnDone">✅ ${biL("I'm ready to practise!", "Em sẵn sàng luyện tập!", true)}</button></div>`;
   bindVisuals(p);
   $$(".vcard", p).forEach(c => c.onclick = () => { c.classList.toggle("flip"); tone("flip"); });
   $$("[data-step]", p).forEach(b => b.onclick = () => {
@@ -1023,16 +1035,37 @@ function renderLearn(p, d) {
   if (d.playground) renderPlayground($("#pgWrap", p), d.playground);
   $("#learnDone").onclick = e => { if (!prog(S.current.id).learn) flyStar(e.currentTarget); award("learn", 1); tone("win"); setTimeout(() => { S.tab = "practice"; renderPlayer($("#main")); scrollTo({ top: 0, behavior: "smooth" }); }, 700); };
 }
+function renderFlip(el, pg) {
+  const N = pg.total, side = Array(N).fill(0), found = new Set(), goal = N - 1;
+  const draw = () => {
+    const r = side.filter(x => x === 0).length, y = N - r;
+    el.innerHTML = `<div class="card play"><h2>🧪 ${biL("Play with it!", "Cùng thử nào!", true)}</h2>
+      <p style="margin:4px 0 0;font-weight:700">${biL(`Here are ${N} counters. Tap a counter to flip it: red 🔴 or yellow 🟡. How many number bonds to ${N} can you make?`, `Đây là ${N} chấm tròn. Chạm vào chấm để lật: đỏ 🔴 hoặc vàng 🟡. Em tạo được bao nhiêu cách tách số ${N}?`)}</p>
+      <div style="display:flex;justify-content:center;margin-top:12px"><div class="flipcircle">${side.map((x, i) => `<button class="obj flipc" data-fl="${i}">${x ? "🟡" : "🔴"}</button>`).join("")}</div></div>
+      <div class="pg-out">${renderVisual({ type: "partwhole", whole: N, parts: [r, y] })}<div style="text-align:center">${renderVisual({ type: "sentence", items: [r, "+", y, "=", N] })}
+      <div class="small muted" style="font-weight:800">${biL(`Bonds found: ${found.size} / ${goal}`, `Số cách đã tìm: ${found.size} / ${goal}`, true)}</div>
+      <div class="found" style="margin-top:6px">${[...found].map(f => `<span>${f}</span>`).join("")}</div></div></div></div>`;
+    $$("[data-fl]", el).forEach(b => b.onclick = () => {
+      side[+b.dataset.fl] ^= 1; tone("flip");
+      const nr = side.filter(x => x === 0).length, ny = N - nr, key = `${nr} + ${ny} = ${N}`;
+      if (nr > 0 && ny > 0 && !found.has(key)) { found.add(key); speak(`${nr} plus ${ny} equals ${N}`);
+        if (found.size === goal) setTimeout(() => { confetti(); tone("win"); setGuide("happy", `You found all ${goal} number bonds to ${N}!`, `Em đã tìm ra tất cả ${goal} cách tách số ${N}!`); }, 300); else tone("good"); }
+      draw();
+    });
+  };
+  draw();
+}
 function renderPlayground(el, pg) {
+  if (pg.kind === "flip") return renderFlip(el, pg);
   const N = pg.total, side = Array(N).fill(0), found = new Set(), goal = N - 1;
   const draw = () => {
     const a = side.filter(s => s === 0).length, b = N - a;
-    el.innerHTML = `<div class="card play"><h2>🧪 ${bi("Play with it!", "Cùng thử nào!", true)}</h2>
-      <p style="margin:4px 0 0;font-weight:700">${bi(`Tap a ${pg.emoji} to move it to the other ${pg.style === "circles" ? "circle" : "hoop"}. Find all the ways to make ${N}!`, `Chạm vào ${pg.emoji} để chuyển sang vòng kia. Tìm tất cả các cách tạo thành ${N}!`)}</p>
+    el.innerHTML = `<div class="card play"><h2>🧪 ${biL("Play with it!", "Cùng thử nào!", true)}</h2>
+      <p style="margin:4px 0 0;font-weight:700">${biL(`Tap a ${pg.emoji} to move it to the other ${pg.style === "circles" ? "circle" : "hoop"}. Find all the ways to make ${N}!`, `Chạm vào ${pg.emoji} để chuyển sang vòng kia. Tìm tất cả các cách tạo thành ${N}!`)}</p>
       <div class="pg-area"><div class="pg-hoop ${pg.style === "circles" ? "circ" : ""}">${side.map((s, i) => s === 0 ? `<button class="obj" data-mv="${i}">${esc(pg.emoji)}</button>` : "").join("")}</div>
       <div class="pg-hoop b ${pg.style === "circles" ? "circ" : ""}">${side.map((s, i) => s === 1 ? `<button class="obj" data-mv="${i}">${esc(pg.emoji)}</button>` : "").join("")}</div></div>
       <div class="pg-out">${renderVisual({ type: "partwhole", whole: N, parts: [a, b] })}<div style="text-align:center"><div style="font-family:var(--fd);font-weight:800;font-size:26px">${a} and ${b} → ${N}</div>
-      <div class="small muted" style="font-weight:800">${bi(`Ways found: ${found.size} / ${goal}`, `Số cách đã tìm: ${found.size} / ${goal}`, true)}</div>
+      <div class="small muted" style="font-weight:800">${biL(`Ways found: ${found.size} / ${goal}`, `Số cách đã tìm: ${found.size} / ${goal}`, true)}</div>
       <div class="found" style="margin-top:6px">${[...found].map(f => `<span>${f}</span>`).join("")}</div></div></div></div>`;
     $$("[data-mv]", el).forEach(b => b.onclick = () => {
       side[+b.dataset.mv] ^= 1; tone("pop");
@@ -1182,19 +1215,23 @@ function gameCircles(p, d, back) {
       if (solved) return;
       if (tray.children.length) { fb.innerHTML = ""; return; }
       if (!a || !b) { fb.innerHTML = `<div class="fb hint">Put some in <b>both</b> circles!</div>`; setGuide("think", "Use both circles!"); return; }
-      fb.innerHTML = `<div class="frame"><div><input class="fbox" id="f1" inputmode="none" autocomplete="off"> is a part.</div><div><input class="fbox" id="f2" inputmode="none" autocomplete="off"> is a part.</div><div>The whole is <input class="fbox" id="f3" inputmode="none" autocomplete="off">.</div></div>
+      const bx = id => `<input class="fbox" id="${id}" inputmode="none" autocomplete="off">`;
+      const frameHTML = R0.frame === "sentence" ? `<div class="frame"><div class="sentrow">${bx("f1")} + ${bx("f2")} = ${bx("f3")}</div></div>`
+        : R0.frame === "whole-first" ? `<div class="frame"><div class="sentrow">${bx("f3")} = ${bx("f1")} + ${bx("f2")}</div></div>`
+        : `<div class="frame"><div>${bx("f1")} is a part.</div><div>${bx("f2")} is a part.</div><div>The whole is ${bx("f3")}.</div></div>`;
+      fb.innerHTML = `${frameHTML}
         <div id="kpWrap">${keypad("f1")}</div><div class="actions"><button class="btn btn-good btn-lg" id="fChk">✓ Check</button></div><div id="ffb"></div>`;
-      setGuide("", "Count each circle. Fill in the boxes!");
-      const boxes = $$(".fbox", fb), pad = $(".keypad", fb);
+      setGuide("", R0.frame === "parts" ? "Count each circle. Fill in the boxes!" : "Count each circle. Write the number sentence!");
+      const boxes = ["f1", "f2", "f3"].map(id => $("#" + id, fb)), pad = $(".keypad", fb);
       const act = b => { boxes.forEach(x => x.classList.toggle("on", x === b)); pad.dataset.for = b.id; };
       boxes.forEach(b => { b.onfocus = () => act(b); b.onclick = () => act(b); b.oninput = () => { b.value = b.value.replace(/\D/g, "").slice(0, 2); b.classList.remove("ok", "no"); }; b.onkeydown = e => { if (e.key === "Enter") check(); }; });
-      act(boxes[0]);
+      act(R0.frame === "whole-first" ? boxes[2] : boxes[0]);
       const check = () => {
         const v = boxes.map(b => parseInt(b.value)); if (v.some(isNaN)) { setGuide("think", "Fill in all three boxes."); return; }
         const okParts = (v[0] === a && v[1] === b) || (v[0] === b && v[1] === a), okWhole = v[2] === N;
         if (okParts && okWhole) {
           solved = true; boxes.forEach(b => { b.classList.remove("no"); b.classList.add("ok"); b.disabled = true; }); if (tries === 0) { firstTry++; flyStar($("#fChk", p)); }
-          tone("good"); const msg = `${v[0]} is a part. ${v[1]} is a part. The whole is ${N}.`; setGuide("happy", msg); speak(msg);
+          tone("good"); const msg = R0.frame === "sentence" ? `${v[0]} + ${v[1]} = ${N}` : R0.frame === "whole-first" ? `${N} = ${v[0]} + ${v[1]}` : `${v[0]} is a part. ${v[1]} is a part. The whole is ${N}.`; setGuide("happy", msg); speak(msg);
           ways.add(`${Math.min(a, b)} and ${Math.max(a, b)}`); const allWays = Math.floor(N / 2);
           $("#ways", p).innerHTML = [...ways].map(w => `<span>${w}</span>`).join("");
           $("#kpWrap", p).innerHTML = "";
@@ -1475,7 +1512,7 @@ $("#whoBtn").onclick = () => askName(true);
 function readHash() { const m = location.hash.match(/^#act-([A-Za-z0-9-]+)$/); return m ? m[1] : null; }
 window.addEventListener("hashchange", () => { if (S.ignoreHash) { S.ignoreHash = false; return; } const k = readHash(); if (k && (!S.current || linkKey(S.current) !== k)) { S.pendingKey = k; openFromKey(); } });
 if (S.embed) {
-  $("#nav").classList.add("hidden"); $("#offlineBadge").classList.remove("hidden");
+  $("#nav").classList.add("hidden"); if (location.protocol === "file:") $("#offlineBadge").classList.remove("hidden");
   let data = S.embed.data; try { data = sanitize(S.embed.data); } catch {}
   S.formUrl = (window.__CONFIG__ && window.__CONFIG__.formUrl) || S.embed.formUrl || "";
   S.current = { id: S.embed.id || "offline", data }; S.view = "player"; S.tab = "learn";
