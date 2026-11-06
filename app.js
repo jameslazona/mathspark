@@ -921,6 +921,7 @@ async function offlineCopy(a) {
   catch (e) { try { await S.downloads.save({ filename, data: html }); toast("Offline copy saved."); } catch { toast("The download was cancelled."); } }
 }
 
+const APP_VERSION = "6 Nov C";
 /* ===================== mission journey (website home page) ===================== */
 const ON_SITE = () => !!window.__CONFIG__;
 const MISSIONS = () => Array.isArray(window.__MISSIONS__) ? window.__MISSIONS__.filter(x => x && x.id && x.folder) : [];
@@ -1253,7 +1254,7 @@ function renderResults(m) {
     <div class="rbar"><button class="btn btn-primary btn-sm" id="rRefresh" ${RS.loading ? "disabled" : ""}>🔄 ${RS.loading ? "Loading…" : "Refresh"}</button>
       <button class="btn btn-ghost btn-sm" id="rCsv">⬇ Download CSV</button>
       <button class="linkbtn" id="rOut">Sign out</button>
-      <span class="small rupd">Updated ${esc(fmtTime(D.now))} · refreshes every minute</span></div>
+      <span class="small rupd">Updated ${esc(fmtTime(D.now))} · refreshes every minute · version ${APP_VERSION}</span></div>
     ${RS.err ? `<div class="notice err">${esc(RS.err)}</div>` : ""}
     <div class="rfilters">
       <label>Activity<select id="rAct"><option value="">All activities</option>${acts.map(([c, t]) => `<option value="${esc(c)}" ${c === RS.act ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>
