@@ -921,7 +921,7 @@ async function offlineCopy(a) {
   catch (e) { try { await S.downloads.save({ filename, data: html }); toast("Offline copy saved."); } catch { toast("The download was cancelled."); } }
 }
 
-const APP_VERSION = "6 Nov C";
+const APP_VERSION = "6 Nov D";
 /* ===================== mission journey (website home page) ===================== */
 const ON_SITE = () => !!window.__CONFIG__;
 const MISSIONS = () => Array.isArray(window.__MISSIONS__) ? window.__MISSIONS__.filter(x => x && x.id && x.folder) : [];
@@ -1011,7 +1011,7 @@ function myMission(id) {
   const local = (store.get("jdone", {})[stuId(S.student)] || []).includes(id);
   return { learn, practice, games, quiz, done: quiz >= 1 || local, stars: Math.max(actStars({ learn, practice, quiz, games }), Number(srv.total) || 0) };
 }
-function journeyGo(m) { tone("whoosh"); setTimeout(() => { location.href = `${m.folder.replace(/[^A-Za-z0-9_-]/g, "")}/`; }, 250); }
+function journeyGo(m) { musicStop(); tone("whoosh"); setTimeout(() => { location.href = `${m.folder.replace(/[^A-Za-z0-9_-]/g, "")}/`; }, 250); }
 function renderJourney(m) {
   $("#nav").classList.add("hidden");
   if (!S.student) { m.innerHTML = `<div class="card result" style="max-width:520px;margin:30px auto"><div style="width:150px;margin:0 auto">${sparkySVG(0)}</div><h2>Your math journey is waiting!</h2></div>`; askName(); return; }
@@ -1109,7 +1109,7 @@ function evolveShow(from, to) {
   modal(`<div class="evo-show"><div class="evo-title">${bi("Something is happening…", "Có điều gì đó đang xảy ra…")}</div>
     <div class="evo-stage" id="evoStage"><div class="evo-pet shaking">${sparkySVG(from)}</div><div class="evo-flash"></div></div>
     <div id="evoText" style="min-height:90px"></div></div>`, (mm, close) => {
-    tone("charge");
+    tone("charge"); musicDuck(true); setTimeout(() => musicDuck(false), 6000);
     setTimeout(() => {
       const st = $("#evoStage", mm); if (!st) return;
       st.classList.add("flash");
@@ -1152,6 +1152,76 @@ function showBoard() {
 function markMissionDone(id) {
   if (!S.student) return; const all = store.get("jdone", {}), k = stuId(S.student);
   all[k] = [...new Set([...(all[k] || []), id])]; store.set("jdone", all);
+}
+
+/* ---- background music for the journey page (made in code: no files) ---- */
+const MUSIC = { on: store.get("music", true), playing: false, timer: null, step: 0, next: 0, out: null, vol: .5 };
+const MU = (() => {
+  const _ = null, mel = [76, _, 79, _, 76, 74, 72, _, 69, _, 72, _, 76, _, 74, _, 77, _, 81, _, 79, 77, 76, _, 74, _, 79, _, _, _, _, _,
+    76, 79, 84, _, 83, _, 79, _, 81, _, 79, _, 76, _, 72, _, 74, _, 77, _, 81, _, 79, 77, 79, _, 77, _, 74, _, 71, _];
+  const C = [60, 64, 67], Am = [57, 60, 64], F = [57, 60, 65], G = [55, 59, 62], Dm = [57, 62, 65];
+  return { mel, chords: [C, Am, F, G, C, Am, Dm, G], bass: [36, 33, 41, 43, 36, 33, 38, 43], bpm: 112 };
+})();
+const hz = n => 440 * Math.pow(2, (n - 69) / 12);
+function musicNote(t, freq, dur, type, gain, out) {
+  const o = AC.createOscillator(), g = AC.createGain();
+  o.type = type; o.frequency.setValueAtTime(freq, t);
+  g.gain.setValueAtTime(.0001, t); g.gain.exponentialRampToValueAtTime(gain, t + .015); g.gain.exponentialRampToValueAtTime(.0001, t + dur);
+  o.connect(g).connect(out); o.start(t); o.stop(t + dur + .05);
+}
+function musicDrum(t, kind, out) {
+  if (kind === "kick") {
+    const o = AC.createOscillator(), g = AC.createGain(); o.frequency.setValueAtTime(140, t); o.frequency.exponentialRampToValueAtTime(45, t + .12);
+    g.gain.setValueAtTime(.5, t); g.gain.exponentialRampToValueAtTime(.0001, t + .16); o.connect(g).connect(out); o.start(t); o.stop(t + .2); return;
+  }
+  const len = Math.floor(AC.sampleRate * .05), buf = AC.createBuffer(1, len, AC.sampleRate), d = buf.getChannelData(0);
+  for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / len);
+  const src = AC.createBufferSource(), hp = AC.createBiquadFilter(), g = AC.createGain();
+  src.buffer = buf; hp.type = "highpass"; hp.frequency.value = 7000; g.gain.value = kind === "hat" ? .12 : .2;
+  src.connect(hp).connect(g).connect(out); src.start(t);
+}
+function musicTick() {
+  const st = 60 / MU.bpm / 2;
+  while (MUSIC.next < AC.currentTime + .15) {
+    const t = MUSIC.next, i = MUSIC.step % 64, bar = Math.floor(i / 8), pos = i % 8, ch = MU.chords[bar], out = MUSIC.out;
+    if (MU.mel[i] != null) { musicNote(t, hz(MU.mel[i]), st * 1.6, "triangle", .2, out); musicNote(t, hz(MU.mel[i] + 12), st * .5, "sine", .04, out); }
+    musicNote(t, hz(ch[pos % 3] + 12), st * .9, "sine", .07, out);
+    if (pos === 0 || pos === 4) musicNote(t, hz(MU.bass[bar] + (pos === 4 ? 7 : 0)), st * 3, "triangle", .3, out);
+    if (pos === 0 || pos === 4) musicDrum(t, "kick", out);
+    if (pos % 2 === 1) musicDrum(t, "hat", out);
+    if (pos === 2 || pos === 6) musicDrum(t, "snap", out);
+    MUSIC.step++; MUSIC.next += st;
+  }
+}
+function musicStart() {
+  if (MUSIC.playing || !MUSIC.on || !S.sound || S.view !== "journey") return;
+  try {
+    AC = AC || new (window.AudioContext || window.webkitAudioContext)();
+    if (AC.state === "suspended") AC.resume();
+    const lp = AC.createBiquadFilter(); lp.type = "lowpass"; lp.frequency.value = 3200;
+    MUSIC.master = AC.createGain(); MUSIC.master.gain.setValueAtTime(.0001, AC.currentTime); MUSIC.master.gain.exponentialRampToValueAtTime(.09 * MUSIC.vol * 2, AC.currentTime + 1.5);
+    lp.connect(MUSIC.master).connect(AC.destination); MUSIC.out = lp;
+    MUSIC.next = AC.currentTime + .1; MUSIC.playing = true;
+    MUSIC.timer = setInterval(musicTick, 30); musicTick();
+  } catch {}
+  syncMusicBtn();
+}
+function musicStop() {
+  if (!MUSIC.playing) return; MUSIC.playing = false; clearInterval(MUSIC.timer);
+  try { const g = MUSIC.master; g.gain.cancelScheduledValues(AC.currentTime); g.gain.setValueAtTime(g.gain.value, AC.currentTime); g.gain.exponentialRampToValueAtTime(.0001, AC.currentTime + .4); setTimeout(() => g.disconnect(), 600); } catch {}
+  syncMusicBtn();
+}
+function musicDuck(on) { try { if (MUSIC.playing) MUSIC.master.gain.setTargetAtTime(on ? .015 : .09 * MUSIC.vol * 2, AC.currentTime, .3); } catch {} }
+function syncMusicBtn() { const b = $("#musicBtn"); if (b) { b.classList.toggle("on", MUSIC.on && S.sound); b.textContent = MUSIC.on && S.sound ? "🎵" : "🎵"; b.style.opacity = MUSIC.on && S.sound ? 1 : .45; b.title = MUSIC.on ? "Music on (tap to turn off)" : "Music off (tap to turn on)"; } }
+function setupMusic() {
+  if ($("#musicBtn")) return;
+  $("#soundBtn").insertAdjacentHTML("beforebegin", `<button class="pill" id="musicBtn" aria-label="Music">🎵</button>`);
+  $("#musicBtn").onclick = e => { e.stopPropagation(); MUSIC.on = !MUSIC.on; store.set("music", MUSIC.on); if (MUSIC.on) { if (!S.sound) { S.sound = true; store.set("sound", true); syncTools(); } musicStart(); } else musicStop(); syncMusicBtn(); };
+  const kick = () => { musicStart(); };
+  ["pointerdown", "keydown", "touchstart"].forEach(ev => document.addEventListener(ev, kick, { passive: true }));
+  document.addEventListener("visibilitychange", () => { if (document.hidden) musicStop(); else if (S.view === "journey") setTimeout(musicStart, 300); });
+  window.addEventListener("pagehide", musicStop);
+  syncMusicBtn();
 }
 
 /* ---- teacher: choose which missions are open ---- */
@@ -1938,7 +2008,7 @@ function renderQuiz(p, d) {
 /* ===================== header & start ===================== */
 const soundBtn = $("#soundBtn");
 const syncTools = () => { soundBtn.classList.toggle("on", S.sound); soundBtn.textContent = S.sound ? "🔊" : "🔇"; };
-soundBtn.onclick = () => { S.sound = !S.sound; store.set("sound", S.sound); syncTools(); tone("tap"); };
+soundBtn.onclick = () => { S.sound = !S.sound; store.set("sound", S.sound); syncTools(); tone("tap"); if (typeof musicStop === "function") { if (S.sound) musicStart(); else musicStop(); syncMusicBtn(); } };
 $("#themeBtn").onclick = themePicker;
 $$("#nav button").forEach(b => b.onclick = () => go(b.dataset.view));
 syncTools(); applyTheme(); updateStars();
@@ -1956,7 +2026,7 @@ if (S.embed) {
 } else if (/^#(results|missions)$/.test(location.hash)) {
   $("#nav").classList.add("hidden"); S.view = "results"; render();
 } else if (ON_SITE()) {
-  S.view = "journey"; updateWho(); updateStars(); render();
+  S.view = "journey"; updateWho(); updateStars(); render(); setupMusic();
 } else {
   S.formUrl = S.lib?.formUrl || "";
   const k = readHash();
