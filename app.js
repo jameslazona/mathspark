@@ -78,7 +78,9 @@ function tone(kind) {
     AC = AC || new (window.AudioContext || window.webkitAudioContext)();
     const seqs = {
       good: [[660, 0], [880, .09], [1175, .18]], bad: [[260, 0], [200, .12]], win: [[523, 0], [659, .1], [784, .2], [1046, .32]],
-      pop: [[900, 0], [1400, .03]], flip: [[520, 0]], tap: [[740, 0]], whoosh: [[400, 0], [700, .05], [1000, .1]]
+      pop: [[900, 0], [1400, .03]], flip: [[520, 0]], tap: [[740, 0]], whoosh: [[400, 0], [700, .05], [1000, .1]],
+      unlock: [[784, 0], [988, .08], [1319, .16], [1568, .26]], charge: Array.from({ length: 14 }, (_, i) => [300 + i * 45, i * .12]),
+      evolve: [[523, 0], [659, .1], [784, .2], [1046, .3], [784, .45], [1046, .55], [1319, .7], [1568, .85]]
     };
     (seqs[kind] || seqs.tap).forEach(([f, t]) => {
       const o = AC.createOscillator(), g = AC.createGain();
@@ -86,8 +88,8 @@ function tone(kind) {
       const v = kind === "bad" ? .08 : .16;
       g.gain.setValueAtTime(.0001, AC.currentTime + t);
       g.gain.exponentialRampToValueAtTime(v, AC.currentTime + t + .015);
-      g.gain.exponentialRampToValueAtTime(.0001, AC.currentTime + t + (kind === "pop" ? .08 : .17));
-      o.connect(g).connect(AC.destination); o.start(AC.currentTime + t); o.stop(AC.currentTime + t + .22);
+      g.gain.exponentialRampToValueAtTime(.0001, AC.currentTime + t + (kind === "pop" ? .08 : kind === "evolve" ? .3 : .17));
+      o.connect(g).connect(AC.destination); o.start(AC.currentTime + t); o.stop(AC.currentTime + t + (kind === "evolve" ? .34 : .22));
     });
   } catch {}
 }
@@ -210,7 +212,9 @@ function askName(force) {
     m.onclick = null;
     const go = () => { const name = $("#stName", m).value.trim(), cls = $("#stClass", m).value.trim();
       if (!name || !cls) { $("#stErr", m).textContent = !name ? "Please write your name." : "Please write your class."; return; }
-      S.student = { name, cls }; store.set("student", S.student); updateWho(); tone("win"); close(); setGuide("happy", `Hi ${name}! Let's play math!`); track("open", { task: "Started" }); };
+      S.student = { name, cls }; store.set("student", S.student); updateWho(); updateStars(); tone("win"); close();
+      if (S.view === "journey") { Object.assign(J, { loaded: false, ok: false, board: [], me: [] }); render(); return; }
+      setGuide("happy", `Hi ${name}! Let's play math!`); track("open", { task: "Started" }); };
     $("#stGo", m).onclick = go; $$("input", m).forEach(i => i.onkeydown = e => { if (e.key === "Enter") go(); });
     setTimeout(() => $("#stName", m).focus(), 50);
   });
@@ -221,10 +225,11 @@ const YES = [["Great job!", "Giỏi quá!"], ["You got it!", "Em làm đúng r�
 const NO = [["Oops! Try again.", "Ồ! Thử lại nhé."], ["Almost! Look again.", "Gần đúng rồi! Nhìn lại nhé."], ["Not yet. You can do it!", "Chưa đúng. Em làm được mà!"]];
 
 /* ===================== progress / stars ===================== */
-function prog(id) { const all = store.get("prog", {}); return all[id] || { learn: 0, practice: 0, quiz: 0, games: {} }; }
-function setProg(id, fn) { const all = store.get("prog", {}); const p = all[id] || { learn: 0, practice: 0, quiz: 0, games: {} }; fn(p); all[id] = p; store.set("prog", all); updateStars(); }
+const PROG = () => window.__CONFIG__ && S.student && !isTeacher() ? "prog:" + `${S.student.name}|${S.student.cls}`.toLowerCase() : "prog";
+function prog(id) { const all = store.get(PROG(), {}); return all[id] || { learn: 0, practice: 0, quiz: 0, games: {} }; }
+function setProg(id, fn) { const all = store.get(PROG(), {}); const p = all[id] || { learn: 0, practice: 0, quiz: 0, games: {} }; fn(p); all[id] = p; store.set(PROG(), all); updateStars(); }
 function actStars(p) { return (p.learn ? 1 : 0) + (p.practice || 0) + (p.quiz || 0) + Object.values(p.games || {}).reduce((a, b) => a + b, 0); }
-function updateStars() { const all = store.get("prog", {}); $("#starCount b").textContent = Object.values(all).reduce((a, p) => a + actStars(p), 0); }
+function updateStars() { const all = store.get(PROG(), {}); $("#starCount b").textContent = Object.values(all).reduce((a, p) => a + actStars(p), 0); }
 function award(kind, stars, game) {
   if (!S.current) return;
   setProg(S.current.id, p => { if (game) { p.games = p.games || {}; p.games[game] = Math.max(p.games[game] || 0, stars); } else p[kind] = Math.max(p[kind] || 0, stars); });
@@ -498,6 +503,7 @@ function render() {
   if (S.view === "create") return renderCreate(m);
   if (S.view === "share") return renderShare(m);
   if (S.view === "results") return renderResults(m);
+  if (S.view === "journey") return renderJourney(m);
   if (S.view === "player" && S.current) return renderPlayer(m);
   return renderLibrary(m);
 }
@@ -540,7 +546,8 @@ function renderLibrary(m) {
   else if (S.libState === "ready") body += `<div class="card empty"><div style="font-size:70px">📭</div><h2>No activities yet</h2>
       <p class="muted">${S.canEdit !== false && S.sample ? "Upload a lesson and MathSpark will build learning, games and a quiz." : "Your teacher hasn't added any activities yet."}</p>
       ${S.canEdit !== false && S.sample ? `<button class="btn btn-primary btn-lg" id="goCreate">✨ Create the first activity</button>` : ""}</div>`;
-  m.innerHTML = `<div class="hero onbg"><div class="mascot">${mascotSVG()}</div><div class="bubble" style="margin-bottom:30px"><h1 style="font-size:inherit">${bi("Hi! I'm Sparky. Let's play math!", "Chào em! Mình là Sparky. Cùng chơi toán nhé!")}</h1></div></div>${body}`;
+  m.innerHTML = `<div class="hero onbg libhero"><div class="mascot">${mascotSVG()}</div><div class="bubble" style="margin-bottom:30px"><h1 style="font-size:inherit">${bi("Hi! I'm Sparky. Let's play math!", "Chào em! Mình là Sparky. Cùng chơi toán nhé!")}</h1></div>
+    <div class="resbtns"><a class="btn btn-ghost btn-lg" href="${SITE_URL}#missions" target="_blank" rel="noopener">🗺️ Missions</a><a class="btn btn-primary btn-lg" href="${SITE_URL}#results" target="_blank" rel="noopener">📊 See results</a></div></div>${body}`;
   $(".hero h1", m).style.fontSize = "24px";
   $("#goCreate")?.addEventListener("click", () => go("create"));
   $$("[data-open]", m).forEach(el => el.addEventListener("click", e => {
@@ -914,14 +921,281 @@ async function offlineCopy(a) {
   catch (e) { try { await S.downloads.save({ filename, data: html }); toast("Offline copy saved."); } catch { toast("The download was cancelled."); } }
 }
 
+/* ===================== mission journey (website home page) ===================== */
+const ON_SITE = () => !!window.__CONFIG__;
+const MISSIONS = () => Array.isArray(window.__MISSIONS__) ? window.__MISSIONS__.filter(x => x && x.id && x.folder) : [];
+const stuId = st => st ? `${st.name}|${st.cls}`.toLowerCase() : "";
+const EVO = [
+  { n: "Sparky Egg", vi: "Trứng Sparky" }, { n: "Baby Sparky", vi: "Sparky con" }, { n: "Sparky", vi: "Sparky" },
+  { n: "Super Sparky", vi: "Siêu Sparky" }, { n: "Rocket Sparky", vi: "Sparky Tên lửa" }, { n: "Wizard Sparky", vi: "Sparky Phù thủy" },
+  { n: "Golden Sparky", vi: "Sparky Vàng" }, { n: "King Sparky", vi: "Vua Sparky" }, { n: "Galaxy Sparky", vi: "Sparky Ngân hà" }];
+const MAX_STAGE = EVO.length - 1;
+const stageFor = done => Math.max(0, Math.min(MAX_STAGE, done));
+function sparkySVG(stage, cls = "") {
+  stage = Math.max(0, Math.min(MAX_STAGE, stage | 0));
+  const u = "sp" + Math.random().toString(36).slice(2, 7);
+  if (stage === 0) return `<svg class="sparky s0 ${cls}" viewBox="-14 -22 128 146" aria-hidden="true">
+    <ellipse cx="50" cy="110" rx="30" ry="6" fill="#000" opacity=".12"/>
+    <g class="egg"><path d="M50 14 C24 14 14 52 14 72 C14 96 30 108 50 108 C70 108 86 96 86 72 C86 52 76 14 50 14Z" fill="#fffaf0" stroke="#e5d9bf" stroke-width="2.5"/>
+    <circle cx="34" cy="44" r="7" fill="var(--primary)" opacity=".55"/><circle cx="66" cy="34" r="5" fill="var(--accent)" opacity=".7"/><circle cx="70" cy="86" r="8" fill="var(--primary)" opacity=".45"/><circle cx="28" cy="88" r="5" fill="var(--accent)" opacity=".6"/>
+    <path d="M18 64 L30 58 L38 66 L48 57 L58 66 L67 57 L76 65 L83 60" stroke="#c9b48a" stroke-width="2.5" fill="none" stroke-linejoin="round"/>
+    <ellipse cx="40" cy="74" rx="4.5" ry="5.5" fill="#1f2937"/><ellipse cx="60" cy="74" rx="4.5" ry="5.5" fill="#1f2937"/><circle cx="41.5" cy="72" r="1.6" fill="#fff"/><circle cx="61.5" cy="72" r="1.6" fill="#fff"/>
+    <path d="M45 84 Q50 88 55 84" stroke="#1f2937" stroke-width="2.5" fill="none" stroke-linecap="round"/></g></svg>`;
+  const gold = stage === 6 || stage === 7, galaxy = stage === 8;
+  const body = galaxy ? `url(#${u}g)` : gold ? "#f5b301" : "var(--primary)";
+  const dark = galaxy ? "#3b2a8f" : gold ? "#b7791f" : "var(--primary-d)";
+  const capeCol = stage >= 7 ? "#7c3aed" : "#ef4444", capeDk = stage >= 7 ? "#5b21b6" : "#b91c1c";
+  const sc = stage === 1 ? .8 : 1;
+  const head = stage >= 7
+    ? `<path d="M30 36 L33 16 L42 28 L50 10 L58 28 L67 16 L70 36 Z" fill="#facc15" stroke="#a16207" stroke-width="2" stroke-linejoin="round"/><circle cx="50" cy="26" r="3.4" fill="#ef4444"/><circle cx="38" cy="30" r="2.4" fill="#3b82f6"/><circle cx="62" cy="30" r="2.4" fill="#22c55e"/>`
+    : stage >= 5
+      ? `<path d="M26 38 Q50 30 74 38 L56 -4 Q52 -10 48 -6 Z" fill="#6d28d9" stroke="#4c1d95" stroke-width="2" stroke-linejoin="round"/><ellipse cx="50" cy="38" rx="28" ry="5" fill="#5b21b6"/><path d="M50 6l2 4.4 4.8.5-3.6 3.2 1 4.7L50 16.4l-4.3 2.4 1-4.7-3.6-3.2 4.8-.5z" fill="#fde047"/><circle cx="60" cy="24" r="2" fill="#fde047"/><circle cx="40" cy="28" r="1.6" fill="#fde047"/>`
+      : stage === 1
+        ? `<path d="M28 40 Q30 20 50 18 Q70 20 72 40 L66 34 L60 41 L54 33 L48 41 L42 33 L36 41 Z" fill="#fffaf0" stroke="#e5d9bf" stroke-width="2" stroke-linejoin="round"/><circle cx="40" cy="28" r="3.5" fill="var(--accent)" opacity=".7"/><circle cx="60" cy="25" r="2.6" fill="var(--primary-d)" opacity=".45"/>`
+        : `<path d="M50 30 L50 20" stroke="${dark}" stroke-width="3" stroke-linecap="round"/><path class="spark" d="M50 3l3.6 7.6 8.3.9-6.2 5.6 1.8 8.2L50 21.1l-7.5 4.2 1.8-8.2-6.2-5.6 8.3-.9z" fill="var(--accent)" stroke="var(--accent-d)" stroke-width="1.5"/>`;
+  return `<svg class="sparky s${stage} ${cls}" viewBox="-14 -22 128 146" aria-hidden="true">
+    <defs><radialGradient id="${u}g" cx=".35" cy=".3"><stop offset="0" stop-color="#a78bfa"/><stop offset=".6" stop-color="#6d28d9"/><stop offset="1" stop-color="#312e81"/></radialGradient>
+      <linearGradient id="${u}r" x1="0" x2="1"><stop offset="0" stop-color="#f87171"/><stop offset=".25" stop-color="#facc15"/><stop offset=".5" stop-color="#4ade80"/><stop offset=".75" stop-color="#60a5fa"/><stop offset="1" stop-color="#c084fc"/></linearGradient></defs>
+    ${galaxy ? `<circle class="aura" cx="50" cy="66" r="58" fill="none" stroke="url(#${u}r)" stroke-width="5" stroke-dasharray="10 7" opacity=".9"/>` : ""}
+    <ellipse cx="50" cy="112" rx="${30 * sc}" ry="5" fill="#000" opacity=".12"/>
+    <g transform="translate(50 80) scale(${sc}) translate(-50 -80)">
+    ${galaxy ? `<path d="M18 58 Q-10 30 -6 70 Q4 66 14 74Z" fill="#bae6fd" stroke="#38bdf8" stroke-width="2"/><path d="M82 58 Q110 30 106 70 Q96 66 86 74Z" fill="#bae6fd" stroke="#38bdf8" stroke-width="2"/>` : ""}
+    ${stage >= 3 ? `<path d="M26 46 Q10 90 16 108 Q50 98 84 108 Q90 90 74 46 Z" fill="${capeCol}" stroke="${capeDk}" stroke-width="2"/>` : ""}
+    ${stage >= 4
+      ? `<g class="boots"><path d="M22 100 h22 v8 q0 4 -4 4 h-18 z" fill="#f97316" stroke="#c2410c" stroke-width="1.5"/><path d="M56 100 h22 v12 h-18 q-4 0 -4 -4 z" fill="#f97316" stroke="#c2410c" stroke-width="1.5"/><path class="flame" d="M26 112 q4 9 8 0 q4 9 8 0" fill="#fde047"/><path class="flame" d="M58 112 q4 9 8 0 q4 9 8 0" fill="#fde047"/></g>`
+      : `<ellipse cx="34" cy="106" rx="11" ry="5" fill="${dark}"/><ellipse cx="66" cy="106" rx="11" ry="5" fill="${dark}"/>`}
+    <path d="M14 72 Q2 64 6 54" stroke="${body}" stroke-width="8" stroke-linecap="round" fill="none"/>
+    <path d="M86 72 Q98 64 94 54" stroke="${body}" stroke-width="8" stroke-linecap="round" fill="none"/>
+    ${stage === 5 || stage === 6 ? `<path d="M96 54 L104 28" stroke="#78350f" stroke-width="3.5" stroke-linecap="round"/><path class="spark" d="M104 16l2.6 5.4 6 .7-4.4 4 1.3 5.9-5.5-3-5.4 3 1.3-5.9-4.4-4 5.9-.7z" fill="#fde047" stroke="#ca8a04" stroke-width="1"/>` : ""}
+    <ellipse cx="50" cy="68" rx="38" ry="38" fill="${body}" ${gold ? `stroke="#b7791f" stroke-width="2"` : ""}/>
+    ${galaxy ? `<circle cx="30" cy="84" r="1.6" fill="#fff"/><circle cx="70" cy="90" r="1.3" fill="#fff"/><circle cx="76" cy="48" r="1.5" fill="#fff"/><circle cx="24" cy="50" r="1.2" fill="#fff"/><circle cx="58" cy="96" r="1" fill="#fff"/>` : ""}
+    <ellipse cx="50" cy="80" rx="24" ry="20" fill="#fff" opacity="${gold ? .35 : .28}"/>
+    ${stage >= 3 && stage < 7 ? `<circle cx="50" cy="94" r="6" fill="#facc15" stroke="#a16207" stroke-width="1.5"/><text x="50" y="97.5" font-size="8" text-anchor="middle" fill="#7c2d12" font-weight="900">★</text>` : ""}
+    <ellipse cx="36" cy="60" rx="9" ry="11" fill="#fff"/><ellipse cx="64" cy="60" rx="9" ry="11" fill="#fff"/>
+    <circle cx="38" cy="62" r="5" fill="#1f2937"/><circle cx="66" cy="62" r="5" fill="#1f2937"/>
+    <circle cx="40" cy="59.5" r="1.8" fill="#fff"/><circle cx="68" cy="59.5" r="1.8" fill="#fff"/>
+    <circle cx="24" cy="76" r="6" fill="#ff8fb1" opacity=".7"/><circle cx="76" cy="76" r="6" fill="#ff8fb1" opacity=".7"/>
+    <path d="M39 78 Q50 89 61 78" stroke="#1f2937" stroke-width="4" fill="none" stroke-linecap="round"/>
+    ${head}
+    </g>
+    ${galaxy ? `<text class="twk" x="-6" y="10" font-size="12">✨</text><text class="twk t2" x="92" y="2" font-size="11">⭐</text><text class="twk t3" x="96" y="104" font-size="10">✨</text>` : ""}
+  </svg>`;
+}
+
+const J = { loaded: false, ok: false, cfg: null, board: [], me: [], lb: "class", busy: false, at: 0 };
+function journeyList() {
+  const all = MISSIONS(), cfg = J.cfg || {}, order = Array.isArray(cfg.order) ? cfg.order : [], state = cfg.state || {};
+  const byId = new Map(all.map(m => [m.id, m]));
+  const seq = [...order.filter(id => byId.has(id)), ...all.map(m => m.id).filter(id => !order.includes(id))];
+  return seq.map(id => ({ ...byId.get(id), state: state[id] || "open" })).filter(m => m.state !== "hidden");
+}
+function loadJourney(quiet) {
+  const url = TRACK_URL(); if (!url || !S.student || J.busy) { J.loaded = true; if (!quiet && S.view === "journey") render(); return; }
+  J.busy = true;
+  const cb = "__msj" + Date.now(), sc = document.createElement("script");
+  const done = d => { clearTimeout(timer); delete window[cb]; sc.remove(); J.busy = false; J.loaded = true;
+    if (d && d.ok) { J.ok = true; J.cfg = d.missions || null; J.board = d.board || []; J.me = d.me || []; J.at = Date.now(); }
+    if (S.view === "journey") render(); };
+  const timer = setTimeout(() => done(null), 15000);
+  window[cb] = d => done(d); sc.onerror = () => done(null);
+  sc.src = `${url}?action=journey&name=${encodeURIComponent(S.student.name)}&cls=${encodeURIComponent(S.student.cls)}&callback=${cb}&t=${Date.now()}`;
+  document.body.appendChild(sc);
+}
+setInterval(() => { if (S.view === "journey" && document.visibilityState === "visible" && !$("#modal:not(.hidden)")) loadJourney(true); }, 60000);
+function myMission(id) {
+  const p = prog(id), srv = J.me.find(r => r.code === id) || {};
+  const quiz = Math.max(p.quiz || 0, Number(srv.quizStars) || 0);
+  const games = { ...(srv.games || {}) }; Object.entries(p.games || {}).forEach(([k, v]) => { games[k] = Math.max(games[k] || 0, v); });
+  const learn = !!(p.learn || srv.learn), practice = Math.max(p.practice || 0, Number(srv.practice) || 0);
+  const local = (store.get("jdone", {})[stuId(S.student)] || []).includes(id);
+  return { learn, practice, games, quiz, done: quiz >= 1 || local, stars: Math.max(actStars({ learn, practice, quiz, games }), Number(srv.total) || 0) };
+}
+function journeyGo(m) { tone("whoosh"); setTimeout(() => { location.href = `${m.folder.replace(/[^A-Za-z0-9_-]/g, "")}/`; }, 250); }
+function renderJourney(m) {
+  $("#nav").classList.add("hidden");
+  if (!S.student) { m.innerHTML = `<div class="card result" style="max-width:520px;margin:30px auto"><div style="width:150px;margin:0 auto">${sparkySVG(0)}</div><h2>Your math journey is waiting!</h2></div>`; askName(); return; }
+  if (!J.loaded && !J.busy) loadJourney();
+  const list = journeyList(), sid = stuId(S.student);
+  const info = list.map(x => ({ ...x, my: myMission(x.id) }));
+  const doneN = info.filter(x => x.my.done).length, stage = stageFor(doneN);
+  const totalStars = info.reduce((a, x) => a + x.my.stars, 0);
+  const nextIdx = info.findIndex(x => x.state === "open" && !x.my.done);
+  const seenOpen = store.get("seenOpen", {})[sid], fresh = seenOpen ? info.filter(x => x.state === "open" && !seenOpen.includes(x.id)).map(x => x.id) : [];
+  const nextStage = stage < MAX_STAGE ? EVO[stage + 1] : null;
+  const evoBar = nextStage ? `<div class="evo-next"><div class="ghost">${sparkySVG(stage + 1)}</div><div style="flex:1"><div class="small" style="font-weight:900">${bi(`Finish 1 more mission to become ${nextStage.n}!`, `Hoàn thành thêm 1 nhiệm vụ để thành ${nextStage.vi}!`)}</div>
+      <div class="evo-dots">${EVO.slice(1).map((_, i) => `<span class="${i < stage ? "on" : ""}"></span>`).join("")}</div></div></div>`
+    : `<div class="evo-next"><div class="small" style="font-weight:900">🌌 ${bi("Your Sparky reached its final form. Amazing!", "Sparky đã đạt hình dạng cuối cùng. Tuyệt vời!")}</div></div>`;
+  const meRank = (() => { const cl = J.board.filter(b => String(b.cls).toLowerCase() === String(S.student.cls).toLowerCase()); const i = cl.findIndex(b => `${b.name}|${b.cls}`.toLowerCase() === sid); return i < 0 ? null : i + 1; })();
+  const top3 = J.board.filter(b => String(b.cls).toLowerCase() === String(S.student.cls).toLowerCase()).slice(0, 3);
+  m.innerHTML = `
+  <div class="jhero card">
+    <div class="jpet" id="jpet">${sparkySVG(stage, "bob")}</div>
+    <div class="jinfo">
+      <div class="eyebrow">${esc(S.student.cls)} · ${bi("Level", "Cấp", true)} ${stage + 1}</div>
+      <h1>${bi(`Hi, ${S.student.name}!`, `Chào ${S.student.name}!`)}</h1>
+      <div class="jform">${bi(`Your buddy: ${EVO[stage].n}`, `Bạn đồng hành: ${EVO[stage].vi}`)}</div>
+      ${evoBar}
+      <div class="jstats"><span>⭐ <b>${totalStars}</b> ${bi("stars", "sao", true)}</span><span>🏁 <b>${doneN}/${info.filter(x => x.state === "open").length}</b> ${bi("missions", "nhiệm vụ", true)}</span>${meRank ? `<span>🏆 <b>#${meRank}</b> ${bi("in your class", "trong lớp", true)}</span>` : ""}</div>
+      <div class="row" style="margin-top:12px"><button class="btn btn-primary" id="jBoard">🏆 ${bi("Leaderboard", "Bảng xếp hạng", true)}</button>
+        ${nextIdx >= 0 ? `<button class="btn btn-accent" id="jNext">▶ ${bi("Next mission", "Nhiệm vụ tiếp theo", true)}</button>` : ""}</div>
+    </div>
+    ${top3.length ? `<div class="jtop"><div class="small" style="font-weight:900;margin-bottom:6px">🏆 ${bi("Top in", "Dẫn đầu lớp", true)} ${esc(S.student.cls)}</div>${top3.map((b, i) => `<div class="jtop-row ${`${b.name}|${b.cls}`.toLowerCase() === sid ? "me" : ""}"><span class="md">${["🥇", "🥈", "🥉"][i]}</span><span class="av">${sparkySVG(stageFor(b.done))}</span><b>${esc(b.name)}</b><span class="spacer"></span><span class="st">⭐ ${b.stars}</span></div>`).join("")}</div>` : ""}
+  </div>
+  ${!J.loaded ? `<div class="card sec rload" style="max-width:420px;margin:0 auto"><div class="spin"></div> ${bi("Loading your map…", "Đang tải bản đồ…", true)}</div>` : `<div class="jmap" id="jmap">
+    <svg class="jpath" id="jpath"></svg>
+    <div class="jstart">🚩 ${bi("Start", "Bắt đầu", true)}</div>
+    ${info.map((x, i) => `<div class="jnode ${x.state === "locked" ? "locked" : x.my.done ? "done" : i === nextIdx ? "next" : "open"} ${fresh.includes(x.id) ? "fresh" : ""}" data-i="${i}" style="--c:${colorFor(x.id)}">
+        ${i === nextIdx ? `<div class="jme">${sparkySVG(stage)}</div>` : ""}
+        <button class="jbtn" data-m="${i}" aria-label="${esc(x.title)}"><span class="ic">${x.state === "locked" ? "🔒" : esc(x.icon || "🔢")}</span>${x.my.done ? `<span class="ok">✓</span>` : ""}</button>
+        <div class="jlab"><div class="small" style="font-weight:900;opacity:.7">${bi("Mission", "Nhiệm vụ", true)} ${i + 1}${fresh.includes(x.id) ? ` <span class="newtag">NEW!</span>` : ""}</div><b>${esc(x.title)}</b>
+          <div class="jst">${x.state === "locked" ? `<span class="small">${bi("Coming soon", "Sắp mở", true)}</span>` : [0, 1, 2].map(k => `<span class="${k < x.my.quiz ? "" : "off"}">⭐</span>`).join("")}</div></div>
+      </div>`).join("")}
+    <div class="jnode castle" data-i="${info.length}"><div class="jbtn" style="cursor:default"><span class="ic">🏰</span></div><div class="jlab"><b>${bi("More missions coming soon!", "Sắp có thêm nhiệm vụ mới!")}</b></div></div>
+  </div>
+  `}
+  ${J.loaded && !info.length ? `<div class="notice">${bi("No missions yet. Ask your teacher!", "Chưa có nhiệm vụ. Hỏi cô/thầy nhé!")}</div>` : ""}`;
+  $("#jBoard", m).onclick = () => { tone("tap"); showBoard(); };
+  $("#jNext", m)?.addEventListener("click", () => missionSheet(info[nextIdx], nextIdx, stage));
+  $$("[data-m]", m).forEach(b => b.onclick = () => { const i = +b.dataset.m, x = info[i];
+    if (x.state === "locked") { tone("bad"); toast("🔒 This mission opens soon. Your teacher will unlock it!"); b.closest(".jnode").classList.remove("shake"); void b.offsetWidth; b.closest(".jnode").classList.add("shake"); return; }
+    missionSheet(x, i, stage); });
+  if (!J.loaded) { $("#jpet", m).onclick = () => tone("pop"); return; }
+  drawJourney(info, nextIdx);
+  $("#jpet", m).onclick = () => { tone("pop"); const p = $("#jpet .sparky"); p.classList.remove("happy"); void p.offsetWidth; p.classList.add("happy"); speak(`I'm ${EVO[stage].n}!`); };
+  // remember what was seen, then celebrate anything new
+  const so = store.get("seenOpen", {}); so[sid] = info.filter(x => x.state === "open").map(x => x.id); store.set("seenOpen", so);
+  if (fresh.length && seenOpen) setTimeout(() => { tone("unlock"); toast(`🎉 New mission: ${info.find(x => x.id === fresh[0]).title}!`, 3500); }, 600);
+  const seenDone = store.get("seenDone", {}), prevDone = seenDone[sid] || [];
+  const nowDone = info.filter(x => x.my.done).map(x => x.id), justDone = nowDone.filter(id => !prevDone.includes(id));
+  if (!(sid in seenDone) || justDone.length) { seenDone[sid] = [...new Set([...prevDone, ...nowDone])]; store.set("seenDone", seenDone); }
+  const evo = store.get("evo", {}), was = evo[sid];
+  if (was == null) { evo[sid] = stage; store.set("evo", evo); if (stage === 0 && !$("#modal:not(.hidden)")) setTimeout(() => meetSparky(), 400); }
+  else if (stage > was) { evo[sid] = stage; store.set("evo", evo); setTimeout(() => evolveShow(was, stage), 500); }
+  else if (justDone.length && prevDone.length + justDone.length > 0 && J.loaded) { const el = $(`.jnode[data-i="${info.findIndex(x => x.id === justDone[0])}"]`); if (el) { el.classList.add("stamp"); tone("win"); } }
+}
+function drawJourney(info, nextIdx) {
+  const map = $("#jmap"); if (!map) return;
+  const W = map.clientWidth, narrow = W < 600, nodes = $$(".jnode", map), xs = narrow ? [.17, .38] : [.5, .78, .5, .22], gap = narrow ? 140 : 170, top = 90;
+  nodes.forEach((n, i) => { const x = xs[i % xs.length] * W, y = top + i * gap; n.style.left = x + "px"; n.style.top = y + "px"; n.classList.toggle("lab-left", !narrow && xs[i % xs.length] > .6); });
+  map.style.setProperty("--sx", xs[0] * 100 + "%");
+  map.style.height = (top + (nodes.length - 1) * gap + 150) + "px";
+  const pts = nodes.map((_, i) => [xs[i % xs.length] * W, top + i * gap]); pts.unshift([xs[0] * W, 20]);
+  const seg = (a, b) => `M${a[0]} ${a[1]} C${a[0]} ${(a[1] + b[1]) / 2} ${b[0]} ${(a[1] + b[1]) / 2} ${b[0]} ${b[1]}`;
+  const doneUpTo = info.reduce((a, x, i) => x.my.done ? i + 1 : a, 0);
+  const svg = $("#jpath"); svg.setAttribute("width", W); svg.setAttribute("height", map.style.height.replace("px", ""));
+  svg.innerHTML = pts.slice(1).map((p, i) => `<path d="${seg(pts[i], p)}" class="${i < doneUpTo ? "on" : ""}"/>`).join("");
+  clearTimeout(drawJourney._t);
+  window.onresize = () => { clearTimeout(drawJourney._t); drawJourney._t = setTimeout(() => { if (S.view === "journey") drawJourney(info, nextIdx); }, 150); };
+}
+function missionSheet(x, i, stage) {
+  tone("tap");
+  const my = x.my, gameN = Object.keys(my.games || {}).length;
+  const parts = [["📘", "Learn", "Học", my.learn], ["✏️", "Practice", "Luyện tập", my.practice > 0], ["🎮", "Play a game", "Chơi trò chơi", gameN > 0], ["🏆", "Pass the Quiz", "Vượt qua bài kiểm tra", my.quiz >= 1]];
+  modal(`<div style="text-align:center"><div class="msheet-ic" style="--c:${colorFor(x.id)}">${esc(x.icon || "🔢")}</div>
+      <div class="eyebrow">${bi("Mission", "Nhiệm vụ", true)} ${i + 1}</div><h3 style="font-size:26px;margin:4px 0">${esc(x.title)}</h3>${x.topic ? `<span class="tag sun">${esc(x.topic)}</span>` : ""}</div>
+    <div class="mparts">${parts.map(([ic, en, vi, ok]) => `<div class="${ok ? "on" : ""}"><span>${ok ? "✅" : ic}</span>${bi(en, vi, true)}</div>`).join("")}</div>
+    <p class="small" style="text-align:center;font-weight:800;margin:4px 0 12px">${my.done ? "🎉 " + bi("Mission complete! Play again to win more stars.", "Đã hoàn thành! Chơi lại để có thêm sao.", true) : bi("Pass the Quiz to complete this mission and help Sparky grow!", "Vượt qua bài kiểm tra để hoàn thành nhiệm vụ và giúp Sparky lớn lên!", true)}</p>
+    <button class="btn btn-primary btn-lg" id="mGo" style="width:100%">${my.done ? "↻ " + bi("Play again", "Chơi lại", true) : "▶ " + bi("Start mission", "Bắt đầu nhiệm vụ", true)}</button>`, (mm, close) => {
+    $("#mGo", mm).onclick = () => { close(); journeyGo(x); };
+  });
+}
+function meetSparky() {
+  modal(`<div style="text-align:center"><div style="width:170px;margin:0 auto">${sparkySVG(0, "wiggle")}</div><h3 style="font-size:26px">${bi("Meet your Sparky Egg!", "Đây là trứng Sparky của em!")}</h3>
+    <p style="font-weight:800">${bi("Finish missions to help it hatch and grow into something amazing.", "Hoàn thành nhiệm vụ để trứng nở và lớn lên thật tuyệt vời.")}</p>
+    <button class="btn btn-primary btn-lg" id="meetOk">${bi("Let's go!", "Bắt đầu thôi!", true)} 🚀</button></div>`, (mm, close) => { tone("pop"); $("#meetOk", mm).onclick = () => { tone("whoosh"); close(); }; });
+}
+function evolveShow(from, to) {
+  modal(`<div class="evo-show"><div class="evo-title">${bi("Something is happening…", "Có điều gì đó đang xảy ra…")}</div>
+    <div class="evo-stage" id="evoStage"><div class="evo-pet shaking">${sparkySVG(from)}</div><div class="evo-flash"></div></div>
+    <div id="evoText" style="min-height:90px"></div></div>`, (mm, close) => {
+    tone("charge");
+    setTimeout(() => {
+      const st = $("#evoStage", mm); if (!st) return;
+      st.classList.add("flash");
+      setTimeout(() => { if (!$("#evoStage", mm)) return;
+        st.querySelector(".evo-pet").outerHTML = `<div class="evo-pet popin">${sparkySVG(to, "bob")}</div>`;
+        tone("evolve"); confetti();
+        $(".evo-title", mm).innerHTML = "🎉 " + bi("WOW! Sparky evolved!", "WOW! Sparky đã tiến hóa!");
+        $("#evoText", mm).innerHTML = `<h3 style="font-size:28px;margin:6px 0">${bi(`${EVO[to].n}!`, `${EVO[to].vi}!`)}</h3><button class="btn btn-primary btn-lg" id="evoOk">${bi("Awesome!", "Tuyệt quá!", true)} ✨</button>`;
+        speak(`Wow! Your Sparky evolved into ${EVO[to].n}!`);
+        $("#evoOk", mm).onclick = () => { tone("tap"); close(); };
+      }, 450);
+    }, 1900);
+  });
+}
+function showBoard() {
+  const sid = stuId(S.student), myCls = String(S.student.cls).toLowerCase();
+  const draw = mm => {
+    const box = $("#lbBox", mm); if (!box) return;
+    const rows = J.lb === "class" ? J.board.filter(b => String(b.cls).toLowerCase() === myCls) : J.board;
+    $$("[data-lb]", mm).forEach(b => b.classList.toggle("on", b.dataset.lb === J.lb));
+    if (!TRACK_URL() || (!J.ok && J.loaded)) { box.innerHTML = `<div class="notice">${bi("The leaderboard isn't ready yet. Ask your teacher.", "Bảng xếp hạng chưa sẵn sàng. Hỏi cô/thầy nhé.")}</div>`; return; }
+    if (!rows.length) { box.innerHTML = `<div class="notice">${bi("No one is on the board yet. Finish a mission to be first!", "Chưa có ai. Hoàn thành nhiệm vụ để là người đầu tiên!")}</div>`; return; }
+    const mi = rows.findIndex(b => `${b.name}|${b.cls}`.toLowerCase() === sid);
+    const row = (b, i) => `<div class="lbrow ${i === mi ? "me" : ""} ${i < 3 ? "top" : ""}"><span class="rk">${i < 3 ? ["🥇", "🥈", "🥉"][i] : i + 1}</span><span class="av">${sparkySVG(stageFor(b.done))}</span>
+      <div style="flex:1;min-width:0"><b>${esc(b.name)}</b>${i === mi ? ` <span class="tag">${bi("You", "Em", true)}</span>` : ""}<div class="small">${J.lb === "all" ? esc(b.cls) + " · " : ""}${EVO[stageFor(b.done)].n}</div></div>
+      <span class="lbs">🏁 ${b.done}</span><span class="lbs st">⭐ ${b.stars}</span></div>`;
+    box.innerHTML = rows.slice(0, 10).map(row).join("") + (mi >= 10 ? `<div class="lbgap">⋯</div>${row(rows[mi], mi)}` : "");
+  };
+  modal(`<div style="text-align:center"><div style="font-size:50px">🏆</div><h3 style="font-size:28px;margin:0">${bi("Leaderboard", "Bảng xếp hạng", true)}</h3></div>
+    <div class="lbtabs"><button data-lb="class">${bi("My class", "Lớp của em", true)}</button><button data-lb="all">${bi("Everyone", "Tất cả", true)}</button></div>
+    <div id="lbBox"><div class="muted" style="text-align:center;padding:20px">…</div></div>
+    <div class="small muted" style="text-align:center;margin-top:8px;font-weight:700">${bi("Win stars in Learn, Practice, Games and the Quiz to climb up!", "Nhận sao ở Học, Luyện tập, Trò chơi và Kiểm tra để leo hạng!", true)}</div>
+    <button class="btn btn-primary" id="lbOk" style="width:100%;margin-top:12px">OK</button>`, (mm, close) => {
+    tone("whoosh"); draw(mm);
+    $$("[data-lb]", mm).forEach(b => b.onclick = () => { tone("tap"); J.lb = b.dataset.lb; draw(mm); });
+    $("#lbOk", mm).onclick = () => close();
+    const prev = J.at; loadJourney(true); const t = setInterval(() => { if (!$("#lbBox", mm)) return clearInterval(t); if (J.at !== prev || !J.busy) { draw(mm); if (!J.busy) clearInterval(t); } }, 400);
+  });
+}
+function markMissionDone(id) {
+  if (!S.student) return; const all = store.get("jdone", {}), k = stuId(S.student);
+  all[k] = [...new Set([...(all[k] || []), id])]; store.set("jdone", all);
+}
+
+/* ---- teacher: choose which missions are open ---- */
+const MS = { draft: null, saving: false, msg: "" };
+function renderMissionsTab(box, D) {
+  const all = MISSIONS();
+  if (!all.length) { box.innerHTML = `<div class="notice">No missions found. Upload <b>missions.js</b> to your website (see the Share page in MathSpark).</div>`; return; }
+  if (!MS.draft) { const cfg = D.missions || {}, order = Array.isArray(cfg.order) ? cfg.order : [];
+    const ids = [...order.filter(id => all.some(m => m.id === id)), ...all.map(m => m.id).filter(id => !order.includes(id))];
+    MS.draft = { order: ids, state: Object.fromEntries(ids.map(id => [id, (cfg.state || {})[id] || "open"])) }; }
+  const byId = new Map(all.map(m => [m.id, m])), dr = MS.draft;
+  const ST = [["open", "🟢 Open"], ["locked", "🔒 Coming soon"], ["hidden", "🙈 Hidden"]];
+  box.innerHTML = `<div class="card sec"><h2 style="margin-bottom:4px">🗺️ Student missions</h2>
+    <p class="muted" style="margin-top:0;font-weight:700">Students open <a href="${SITE_URL}" target="_blank" rel="noopener">${SITE_URL}</a> and see these missions as one journey, in this order.<br>
+    <b>Open</b> = students can play it. <b>Coming soon</b> = they see it locked. <b>Hidden</b> = not on their map.</p>
+    <div class="mlist">${dr.order.map((id, i) => { const m = byId.get(id); return `<div class="mrow st-${dr.state[id]}"><span class="mnum">${i + 1}</span><span class="mic">${esc(m.icon || "🔢")}</span><b style="flex:1;min-width:140px">${esc(m.title)}</b>
+      <div class="seg">${ST.map(([k, l]) => `<button class="${dr.state[id] === k ? "on st-" + k : ""}" data-st="${esc(id)}" data-v="${k}">${l}</button>`).join("")}</div>
+      <button class="btn btn-ghost btn-sm" data-up="${i}" ${i ? "" : "disabled"} title="Move up">▲</button><button class="btn btn-ghost btn-sm" data-dn="${i}" ${i < dr.order.length - 1 ? "" : "disabled"} title="Move down">▼</button></div>`; }).join("")}</div>
+    <div class="row" style="margin-top:14px"><button class="btn btn-primary" id="mSave" ${MS.saving ? "disabled" : ""}>${MS.saving ? "Saving…" : "💾 Save missions"}</button><span class="small" style="font-weight:800">${esc(MS.msg)}</span></div></div>`;
+  $$("[data-st]", box).forEach(b => b.onclick = () => { dr.state[b.dataset.st] = b.dataset.v; MS.msg = "Not saved yet"; renderMissionsTab(box, D); });
+  $$("[data-up]", box).forEach(b => b.onclick = () => { const i = +b.dataset.up; [dr.order[i - 1], dr.order[i]] = [dr.order[i], dr.order[i - 1]]; MS.msg = "Not saved yet"; renderMissionsTab(box, D); });
+  $$("[data-dn]", box).forEach(b => b.onclick = () => { const i = +b.dataset.dn; [dr.order[i + 1], dr.order[i]] = [dr.order[i], dr.order[i + 1]]; MS.msg = "Not saved yet"; renderMissionsTab(box, D); });
+  $("#mSave", box).onclick = () => {
+    const url = TRACK_URL(), key = store.get("tkey", ""); if (!url || !key) return;
+    MS.saving = true; MS.msg = ""; renderMissionsTab(box, D);
+    fetch(url, { method: "POST", mode: "no-cors", headers: { "Content-Type": "text/plain;charset=utf-8" }, body: JSON.stringify({ action: "missions", key, order: dr.order, state: dr.state }) })
+      .then(() => new Promise(r => setTimeout(r, 1500)))
+      .then(() => { MS.saving = false; MS.msg = ""; RS.after = () => {
+          const c = RS.data && RS.data.missions, same = c && JSON.stringify(c.order) === JSON.stringify(dr.order) && Object.keys(dr.state).every(id => c.state && c.state[id] === dr.state[id]);
+          MS.msg = same ? "✅ Saved! Students will see it next time they open the journey." : RS.data && !("missions" in RS.data) ? "⚠️ Update your Google script first (see step 1 in the instructions)." : "⚠️ It didn't save. Try again.";
+          if (same) tone("win"); };
+        loadResults(key, true); })
+      .catch(() => { MS.saving = false; MS.msg = "⚠️ Couldn't save. Check your internet."; renderMissionsTab(box, D); });
+  };
+}
+
 /* ===================== results page (website, #results) ===================== */
-const RS = { data: null, loading: false, err: "", cls: "", act: "", q: "", sort: "last", dir: -1, open: {} };
+const RS = { data: null, loading: false, err: "", cls: "", act: "", q: "", sort: "last", dir: -1, open: {}, tab: location.hash === "#missions" ? "missions" : "results" };
 function loadResults(key, quiet) {
   const url = TRACK_URL(); if (!url || !key) return;
   RS.loading = true; if (!quiet) { RS.err = ""; render(); }
   const cb = "__msres" + Date.now(), sc = document.createElement("script");
   const done = (data, err) => { clearTimeout(timer); delete window[cb]; sc.remove(); RS.loading = false;
     if (data && data.ok) { RS.data = data; RS.err = ""; store.set("tkey", key); }
+    if (RS.after) { const f = RS.after; RS.after = null; f(); }
     else if (data && data.error === "key") { RS.err = "That teacher key is not right. Check it and try again."; RS.data = null; store.set("tkey", ""); }
     else if (!quiet || !RS.data) RS.err = err || "Couldn't load the results.";
     if (S.view === "results") render(); };
@@ -965,6 +1239,8 @@ function renderResults(m) {
   const acts = [...new Map(all.map(s => [s.code, s.title])).entries()];
   const classes = [...new Set(all.map(s => String(s.cls || "")).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
   m.innerHTML = resHero(SUB) + `
+    <div class="rtabs big"><button class="${RS.tab === "results" ? "on" : ""}" data-rtab="results">📊 Results</button><button class="${RS.tab === "missions" ? "on" : ""}" data-rtab="missions">🗺️ Missions</button></div>
+    <div id="mBox" ${RS.tab === "missions" ? "" : "hidden"}></div><div id="rBox" ${RS.tab === "results" ? "" : "hidden"}>
     <div class="rbar"><button class="btn btn-primary btn-sm" id="rRefresh" ${RS.loading ? "disabled" : ""}>🔄 ${RS.loading ? "Loading…" : "Refresh"}</button>
       <button class="btn btn-ghost btn-sm" id="rCsv">⬇ Download CSV</button>
       <button class="linkbtn" id="rOut">Sign out</button>
@@ -974,7 +1250,9 @@ function renderResults(m) {
       <label>Activity<select id="rAct"><option value="">All activities</option>${acts.map(([c, t]) => `<option value="${esc(c)}" ${c === RS.act ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>
       <label>Class<select id="rCls"><option value="">All classes</option>${classes.map(c => `<option ${c === RS.cls ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
       <label>Student<input type="text" id="rQ" value="${esc(RS.q)}" placeholder="Search a student"></label></div>
-    <div class="rstats" id="rStats"></div><div id="rGroups"></div>`;
+    <div class="rstats" id="rStats"></div><div id="rGroups"></div></div>`;
+  $$("[data-rtab]", m).forEach(b => b.onclick = () => { RS.tab = b.dataset.rtab; history.replaceState(null, "", RS.tab === "missions" ? "#missions" : "#results"); render(); });
+  if (RS.tab === "missions") { renderMissionsTab($("#mBox", m), D); return; }
   $("#rRefresh", m).onclick = () => loadResults(store.get("tkey", ""));
   $("#rOut", m).onclick = () => { store.set("tkey", ""); RS.data = null; RS.err = ""; RS.tried = true; render(); };
   $("#rAct", m).onchange = e => { RS.act = e.target.value; paint(); };
@@ -1045,43 +1323,36 @@ function renderShare(m) {
   const list = S.activities;
   const f = parseForm(S.formUrl);
   m.innerHTML = `
-  <div class="guide onbg"><div class="mascot" id="mascot">${mascotSVG()}</div><div class="bubble" id="bubble"><b>Share activities with your students.</b> Each activity is its own page on your website. A student can only open the activity in the link you send. No login.</div></div>
-  <div class="card sec"><h2>1 · Student links (your website)</h2>
-    <div>${list.map((a, i) => `<div class="file"><div class="thumb" style="background:#fff;font-size:26px;box-shadow:inset 0 0 0 2px #e5e7eb">${esc(a.data.icon || "🔢")}</div><div style="flex:1;min-width:0"><div class="nm">${esc(a.data.title)}</div><div class="st" style="word-break:break-all"><a href="${esc(actLink(a))}" target="_blank" rel="noopener">${esc(actLink(a))}</a></div></div>
-      <button class="btn btn-ghost btn-sm" data-cp="${esc(actLink(a))}">📋 Copy</button><button class="btn btn-ghost btn-sm" data-web="${i}">⬇ Website page</button></div>`).join("") || `<p class="muted">No activities yet.</p>`}</div>
-    <div class="notice" style="margin-top:14px"><b>Adding a new activity to the website</b>
-      <ol style="margin:6px 0 0;padding-left:20px;line-height:1.7">
-        <li>Press <b>⬇ Website page</b> next to the activity. It downloads a file called <b>index.html</b>.</li>
-        <li>On GitHub, open your <b>mathspark</b> repository and click <b>Add file → Upload files</b>.</li>
-        <li>Drag in <b>index.html</b>. Before committing, click the file name box at the top and type the folder name first, for example <b>number-bonds/</b>, so it becomes <b>number-bonds/index.html</b>. Use the folder name shown in the link.</li>
-        <li>Click <b>Commit changes</b>. The link works a minute or two later.</li>
-      </ol>
-      <div class="small muted" style="margin-top:6px;font-weight:700">Changed an activity that's already on the website? Download its page again and upload it to the same folder to replace the old one. Book pictures you added are not included in website pages.</div></div>
+  <div class="guide onbg"><div class="mascot" id="mascot">${mascotSVG()}</div><div class="bubble" id="bubble"><b>One link for all your missions.</b> Students open your website, type their name and class, and follow the mission journey. No login.</div></div>
+  <div class="card sec"><h2>1 · The student link</h2>
+    <div class="file"><div class="thumb" style="background:#fff;font-size:26px;box-shadow:inset 0 0 0 2px #e5e7eb">🗺️</div><div style="flex:1;min-width:0"><div class="nm">Mission journey (all activities)</div><div class="st"><a href="${SITE_URL}" target="_blank" rel="noopener">${SITE_URL}</a></div></div>
+      <button class="btn btn-ghost btn-sm" data-cp="${SITE_URL}">📋 Copy</button></div>
+    <div class="row" style="margin-top:12px"><a class="btn btn-ghost btn-sm" href="${SITE_URL}#missions" target="_blank" rel="noopener">🗺️ Choose open missions</a><a class="btn btn-primary btn-sm" href="${SITE_URL}#results" target="_blank" rel="noopener">📊 See results</a></div>
   </div>
-  <div class="card sec"><h2>2 · Results in Google Forms</h2>
-    <p style="margin-top:0">At the end of Practice, each Game and the Quiz, students tap <b>📨 Send my result to my teacher</b>. Their name, class, activity and score go to your Google Form, and you see everything in a Google Sheet.</p>
-    <ol style="line-height:1.7;padding-left:20px;margin:6px 0 12px">
-      <li>Go to <a href="https://forms.google.com" target="_blank" rel="noopener">forms.google.com</a> and make a blank form called <b>MathSpark Results</b>.</li>
-      <li>Add 6 <b>Short answer</b> questions, in this order: <b>Name</b>, <b>Class</b>, <b>Activity</b>, <b>Task</b>, <b>Score</b>, <b>Stars</b>.</li>
-      <li>In <b>Settings → Responses</b>, turn OFF "Collect email addresses" and OFF "Restrict to users in your organisation".</li>
-      <li>Click <b>⋮</b> (top right) → <b>Get pre-filled link</b>. Type exactly <b>NAME</b>, <b>CLASS</b>, <b>ACTIVITY</b>, <b>TASK</b>, <b>SCORE</b>, <b>STARS</b> in the 6 boxes, then <b>Get link → Copy link</b>.</li>
-      <li>Paste the link below and press <b>Save</b>. On your website, the link also goes in <b>config.js</b> (you've already done this).</li>
-      <li>In your form's <b>Responses</b> tab, click <b>Link to Sheets</b> to see all results in a spreadsheet.</li>
-    </ol>
-    <label class="f" for="formIn">Pre-filled link</label>
-    <input type="text" id="formIn" value="${esc(S.formUrl)}" placeholder="https://docs.google.com/forms/d/e/…/viewform?usp=pp_url&entry.…=NAME…">
-    <div id="formStat" class="small" style="font-weight:800;margin-top:6px">${f ? `✅ Connected: ${Object.keys(f.map).join(", ")}` : S.formUrl ? "⚠️ This link doesn't look right." : ""}</div>
-    <div class="row" style="margin-top:10px"><button class="btn btn-primary btn-sm" id="formSave">💾 Save</button>${f ? `<a class="btn btn-ghost btn-sm" id="formTest" target="_blank" rel="noopener" href="#">🧪 Send a test result</a>` : ""}</div>
+  <div class="card sec"><h2>2 · Activities on your website</h2>
+    <div>${list.map((a, i) => `<div class="file"><div class="thumb" style="background:#fff;font-size:26px;box-shadow:inset 0 0 0 2px #e5e7eb">${esc(a.data.icon || "🔢")}</div><div style="flex:1;min-width:0"><div class="nm">${esc(a.data.title)}</div><div class="st" style="word-break:break-all">Folder: <b>${esc(webFolder(a))}</b> · <a href="${esc(actLink(a))}" target="_blank" rel="noopener">open</a></div></div>
+      <button class="btn btn-ghost btn-sm" data-cp="${esc(actLink(a))}">📋 Copy</button><button class="btn btn-ghost btn-sm" data-web="${i}">⬇ Website page</button></div>`).join("") || `<p class="muted">No activities yet.</p>`}</div>
+    <div class="row" style="margin-top:12px"><button class="btn btn-accent" id="misDl">⬇ missions.js (the mission list)</button></div>
+    <div class="notice" style="margin-top:14px"><b>Adding a new activity to the journey</b>
+      <ol style="margin:6px 0 0;padding-left:20px;line-height:1.7">
+        <li>Press <b>⬇ Website page</b> next to the new activity. It downloads <b>index.html</b>.</li>
+        <li>Press <b>⬇ missions.js</b>. It downloads the updated mission list.</li>
+        <li>On GitHub, open <b>mathspark</b> and click <b>Add file → Upload files</b>. Drag in <b>index.html</b>, then click the file name box and type the folder name first, for example <b>number-bonds/</b>. Commit.</li>
+        <li>Upload <b>missions.js</b> the same way, but at the top level (no folder). Commit.</li>
+        <li>Open <b>🗺️ Choose open missions</b> to unlock it for students, or lock it until you're ready.</li>
+      </ol>
+      <div class="small muted" style="margin-top:6px;font-weight:700">Changed an activity that's already on the website? Download its page again and upload it to the same folder. Book pictures you added are not included in website pages.</div></div>
   </div>`;
+  $("#misDl", m).onclick = () => missionsFile();
   $$("[data-cp]", m).forEach(b => b.onclick = async () => { try { await navigator.clipboard.writeText(b.dataset.cp); toast("Link copied!"); } catch { toast(b.dataset.cp, 6000); } });
   $$("[data-web]", m).forEach(b => b.onclick = () => websitePage(list[+b.dataset.web]));
-  $("#formSave", m).onclick = async () => {
-    const v = $("#formIn", m).value.trim(), pf = parseForm(v);
-    if (v && !pf) { $("#formStat", m).textContent = "⚠️ I couldn't find NAME and SCORE in this link. Check step 4."; tone("bad"); return; }
-    try { await S.db.doc("settings/main").set({ formUrl: v }); S.formUrl = v; toast("Saved!"); render(); } catch { toast("Couldn't save the link."); }
-  };
-  const t = $("#formTest", m);
-  if (t) { const cur = S.current; S.current = { id: "test", data: { title: "Test activity" } }; t.href = resultUrl("Test", "10/10", 3) || "#"; S.current = cur; }
+}
+async function missionsFile() {
+  if (!S.downloads) { toast("Downloads aren't available here."); return; }
+  const list = S.activities.slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0)).map(a => ({ id: a.id, folder: webFolder(a), title: a.data.title, icon: a.data.icon || "🔢", topic: a.data.topic || "" }));
+  const js = `// MathSpark mission list. Made by the MathSpark app. Upload it to the top of your mathspark repository.\nwindow.__MISSIONS__ = ${JSON.stringify(list, null, 1).replace(/</g, "\\u003c")};\n`;
+  try { await S.downloads.save({ filename: "missions.js", data: new Blob([js], { type: "text/javascript" }) }); toast("Downloaded missions.js! Upload it to the top of your mathspark repository.", 5000); }
+  catch { toast("The download was cancelled."); }
 }
 async function websitePage(a) {
   if (!S.downloads) { toast("Downloads aren't available here."); return; }
@@ -1613,9 +1884,11 @@ function renderQuiz(p, d) {
   const path = () => `<div class="path">${Q.order.map((o, i) => `${i ? `<span class="link"></span>` : ""}<span class="stone ${i < Q.picks.length ? (Q.picks[i] === o.q.answer ? "r" : "w") : ""} ${i === Q.i && i >= Q.picks.length ? "cur" : ""}">${i === Math.min(Q.i, Q.order.length - 1) && Q.i < Q.order.length ? `<span class="me">${mascotSVG()}</span>` : ""}${i < Q.picks.length ? (Q.picks[i] === o.q.answer ? "✓" : "✗") : i + 1}</span>`).join("")}<span class="flag">🏁</span></div>`;
   if (Q.i >= qs.length) {
     const right = Q.order.filter((o, i) => Q.picks[i] === o.q.answer).length, pct = Math.round(right / qs.length * 100), st = starsFor(pct);
+    if (!Q.saved && st >= 1 && S.embed) markMissionDone(S.current.id);
     if (!Q.saved) { Q.saved = true; track("quiz", { task: "Quiz", score: `${right}/${qs.length} (${pct}%)`, stars: st, correct: right, total: qs.length }); award("quiz", st); refreshTabs(); if (st >= 2) confetti(); tone("win"); setGuide(st >= 2 ? "happy" : "think", ...PRAISE[st]); }
     p.innerHTML = `${path()}<div class="card result"><div class="trophy">${st >= 2 ? "🏆" : "🎖️"}</div>${starsHTML(st)}<h2>${bi(`${right} / ${qs.length} correct`, `Đúng ${right} / ${qs.length} câu`)}</h2><p style="font-weight:800">${bi(PRAISE[st][0], PRAISE[st][1])}</p>
       ${sendBox("Quiz", `${right}/${qs.length} (${pct}%)`, st)}
+      ${S.embed && ON_SITE() ? (st >= 1 ? `<div class="mdone">🏁 ${bi("Mission complete!", "Hoàn thành nhiệm vụ!", true)} <a class="btn btn-accent" href="../">🗺️ ${bi("Back to my journey", "Về hành trình của em", true)}</a></div>` : `<div class="small" style="font-weight:800;margin:8px 0">${bi("Get at least 1 star to complete this mission. You can do it!", "Đạt ít nhất 1 sao để hoàn thành nhiệm vụ. Em làm được mà!", true)}</div>`) : ""}
       <div class="actions"><button class="btn btn-primary" id="qAgain">↻ ${bi("Try again", "Làm lại", true)}</button>${pct < 70 ? `<button class="btn btn-ghost" id="qLearn">📘 ${bi("Review the lesson", "Ôn lại bài", true)}</button>` : ""}<button class="btn btn-ghost" id="qRev">📋 ${bi("Check answers", "Xem đáp án", true)}</button></div>
       <div class="review hidden" id="rev">${Q.order.map((o, i) => { const ok = Q.picks[i] === o.q.answer; return `<div class="it"><div><b>${ok ? "✅" : "❌"} ${i + 1}.</b> ${bi(o.q.question, o.q.question_vi)}</div>
         ${!ok ? `<div class="small">${bi("You chose", "Em chọn", true)}: <b style="color:var(--bad)">${esc(o.q.choices[Q.picks[i]] ?? "—")}</b></div>` : ""}<div class="small">${bi("Answer", "Đáp án", true)}: <b style="color:var(--good)">${esc(o.q.choices[o.q.answer])}</b></div>
@@ -1661,8 +1934,11 @@ if (S.embed) {
   S.current = { id: S.embed.id || "offline", data }; S.view = "player"; S.tab = "learn";
   render(); updateWho(); askName();
   if (S.student) track("open", { task: "Started" });
-} else if (/^#results$/.test(location.hash)) {
+  if (ON_SITE()) { $("#starCount").title = "Your stars"; $("#nav").insertAdjacentHTML("afterend", `<a class="pill jlink" href="../" title="My journey">🗺️ <span class="nl">My journey</span></a>`); }
+} else if (/^#(results|missions)$/.test(location.hash)) {
   $("#nav").classList.add("hidden"); S.view = "results"; render();
+} else if (ON_SITE()) {
+  S.view = "journey"; updateWho(); updateStars(); render();
 } else {
   S.formUrl = S.lib?.formUrl || "";
   const k = readHash();
