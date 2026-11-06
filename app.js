@@ -1,4 +1,3 @@
-
 (() => {
 "use strict";
 const TEMPLATE_BODY = document.getElementById("app-root").outerHTML;
@@ -174,7 +173,23 @@ function resultUrl(task, score, stars) {
   q.set("submit", "Submit");
   return `${f.base}/formResponse?${q.toString()}`;
 }
+/* ---------- automatic result tracking (Google Sheet via Apps Script) ---------- */
+const TRACK_URL = () => { const u = (window.__CONFIG__ && window.__CONFIG__.trackUrl) || ""; return /^https:\/\/script\.google\.com\/macros\/s\/[\w-]+\/exec$/.test(u.trim()) ? u.trim() : ""; };
+const device = () => { const u = navigator.userAgent; return /iPad/.test(u) ? "iPad" : /iPhone/.test(u) ? "iPhone" : /Android/.test(u) ? "Android" : /Windows/.test(u) ? "Windows" : /Mac/.test(u) ? "Mac" : /CrOS/.test(u) ? "Chromebook" : "Other"; };
+function postEvents(list) {
+  const url = TRACK_URL(); if (!url || !list.length) return;
+  const body = JSON.stringify(list);
+  fetch(url, { method: "POST", mode: "no-cors", keepalive: body.length < 60000, headers: { "Content-Type": "text/plain;charset=utf-8" }, body })
+    .catch(() => { const q = store.get("queue", []); store.set("queue", q.concat(list).slice(-100)); });
+}
+function track(type, extra = {}) {
+  if (!TRACK_URL() || !S.current || !S.student || isTeacher()) return;
+  const ev = { type, name: S.student.name, cls: S.student.cls, code: S.current.id, title: S.current.data.title, dev: device(), t: Date.now(), ...extra };
+  const q = store.get("queue", []); if (q.length) store.set("queue", []);
+  postEvents(q.concat([ev]));
+}
 function sendBox(task, score, stars) {
+  if (TRACK_URL() && S.student) return `<div class="sendbox"><div class="fb good" style="display:inline-block">📨 Your teacher can see this result.</div><div class="small muted" style="margin-top:6px;font-weight:700">${esc(S.student.name)} · ${esc(S.student.cls)} · ${esc(task)} · ${esc(score)}</div></div>`;
   if (!S.formUrl) return "";
   const url = resultUrl(task, score, stars); if (!url) return "";
   const key = `${S.current.id}|${task}|${score}|${Date.now() >> 16}`;
@@ -195,7 +210,7 @@ function askName(force) {
     m.onclick = null;
     const go = () => { const name = $("#stName", m).value.trim(), cls = $("#stClass", m).value.trim();
       if (!name || !cls) { $("#stErr", m).textContent = !name ? "Please write your name." : "Please write your class."; return; }
-      S.student = { name, cls }; store.set("student", S.student); updateWho(); tone("win"); close(); setGuide("happy", `Hi ${name}! Let's play math!`); };
+      S.student = { name, cls }; store.set("student", S.student); updateWho(); tone("win"); close(); setGuide("happy", `Hi ${name}! Let's play math!`); track("open", { task: "Started" }); };
     $("#stGo", m).onclick = go; $$("input", m).forEach(i => i.onkeydown = e => { if (e.key === "Enter") go(); });
     setTimeout(() => $("#stName", m).focus(), 50);
   });
@@ -482,6 +497,7 @@ function render() {
   const m = $("#main");
   if (S.view === "create") return renderCreate(m);
   if (S.view === "share") return renderShare(m);
+  if (S.view === "results") return renderResults(m);
   if (S.view === "player" && S.current) return renderPlayer(m);
   return renderLibrary(m);
 }
@@ -898,6 +914,131 @@ async function offlineCopy(a) {
   catch (e) { try { await S.downloads.save({ filename, data: html }); toast("Offline copy saved."); } catch { toast("The download was cancelled."); } }
 }
 
+/* ===================== results page (website, #results) ===================== */
+const RS = { data: null, loading: false, err: "", cls: "", act: "", q: "", sort: "last", dir: -1, open: {} };
+function loadResults(key, quiet) {
+  const url = TRACK_URL(); if (!url || !key) return;
+  RS.loading = true; if (!quiet) { RS.err = ""; render(); }
+  const cb = "__msres" + Date.now(), sc = document.createElement("script");
+  const done = (data, err) => { clearTimeout(timer); delete window[cb]; sc.remove(); RS.loading = false;
+    if (data && data.ok) { RS.data = data; RS.err = ""; store.set("tkey", key); }
+    else if (data && data.error === "key") { RS.err = "That teacher key is not right. Check it and try again."; RS.data = null; store.set("tkey", ""); }
+    else if (!quiet || !RS.data) RS.err = err || "Couldn't load the results.";
+    if (S.view === "results") render(); };
+  const timer = setTimeout(() => done(null, "The results took too long to load. Check your internet and press Refresh."), 25000);
+  window[cb] = d => done(d);
+  sc.onerror = () => done(null, "Couldn't reach the results. Check your internet and press Refresh.");
+  sc.src = `${url}?action=results&key=${encodeURIComponent(key)}&callback=${cb}&t=${Date.now()}`;
+  document.body.appendChild(sc);
+}
+setInterval(() => { if (S.view === "results" && RS.data && document.visibilityState === "visible" && !RS.loading) loadResults(store.get("tkey", ""), true); }, 60000);
+const fmtTime = iso => { if (!iso) return ""; const d = new Date(iso); return isNaN(d) ? "" : d.toLocaleString("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }); };
+const ago = iso => { const t = Date.parse(iso); if (!t) return ""; const m = Math.round((Date.now() - t) / 60000);
+  if (m < 1) return "just now"; if (m < 60) return m + " min ago"; const h = Math.round(m / 60); if (h < 24) return h + " h ago"; const d = Math.round(h / 24); return d === 1 ? "yesterday" : d + " days ago"; };
+const GAME_ICON = { "Two Circles": "⭕", "Build the Model": "🍒", "Balloon Pop": "🎈", "Memory Match": "🃏", "Sort It!": "🧺", "Beat the Clock": "⏱️" };
+const stuKey = r => `${r.name}|${r.cls}|${r.code}`.toLowerCase();
+function resHero(sub) {
+  return `<div class="rhero card"><div><div class="eyebrow">Teacher only</div><h1>Class results</h1><p>${sub}</p></div>
+    <div class="rhero-art" aria-hidden="true"><span class="a1">📚</span><span class="a2">🏆</span><span class="a3">⭐</span><span class="a4">✨</span><span class="a5">🏅</span><span class="a6">🧮</span></div></div>`;
+}
+function renderResults(m) {
+  $("#starCount").classList.add("hidden"); $("#whoBtn").classList.add("hidden");
+  const url = TRACK_URL(), key = store.get("tkey", "");
+  const SUB = "Who has done each MathSpark activity, and how well.";
+  if (!url) { m.innerHTML = resHero(SUB) + `<div class="notice">Result saving isn't switched on yet. Add your tracking link to <b>trackUrl</b> in <b>config.js</b>.</div>`; return; }
+  if (!RS.data && !(key && RS.loading)) {
+    m.innerHTML = resHero(SUB) + `<form class="card sec rkey" id="kform"><div style="font-size:54px">🔑</div><h2>Type your teacher key</h2>
+      <p class="muted" style="font-weight:700">It's at the top of your tracking script.</p>
+      ${RS.err ? `<div class="notice err">${esc(RS.err)}</div>` : ""}
+      <input type="password" id="tkey" placeholder="MS-XXXXXX" autocomplete="current-password" spellcheck="false">
+      <button class="btn btn-primary btn-lg" type="submit">✔ Show results</button>
+      <p class="small muted">This device will remember the key. Only use it on your own phone or computer.</p></form>`;
+    $("#kform", m).onsubmit = e => { e.preventDefault(); const k = $("#tkey", m).value.trim().toUpperCase(); if (k) loadResults(k); };
+    if (key && !RS.err && !RS.tried) { RS.tried = true; loadResults(key); }
+    return;
+  }
+  if (!RS.data) { m.innerHTML = resHero(SUB) + `<div class="card sec rload"><div class="spin"></div> Loading results…</div>`; return; }
+  const D = RS.data, all = (D.students || []).map(r => {
+    const steps = [!!r.learn, !!r.practice, Object.keys(r.games || {}).length > 0, r.quizPct !== "" && r.quizPct != null];
+    return { ...r, steps, done: steps.filter(Boolean).length };
+  });
+  const acts = [...new Map(all.map(s => [s.code, s.title])).entries()];
+  const classes = [...new Set(all.map(s => String(s.cls || "")).filter(Boolean))].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  m.innerHTML = resHero(SUB) + `
+    <div class="rbar"><button class="btn btn-primary btn-sm" id="rRefresh" ${RS.loading ? "disabled" : ""}>🔄 ${RS.loading ? "Loading…" : "Refresh"}</button>
+      <button class="btn btn-ghost btn-sm" id="rCsv">⬇ Download CSV</button>
+      <button class="linkbtn" id="rOut">Sign out</button>
+      <span class="small rupd">Updated ${esc(fmtTime(D.now))} · refreshes every minute</span></div>
+    ${RS.err ? `<div class="notice err">${esc(RS.err)}</div>` : ""}
+    <div class="rfilters">
+      <label>Activity<select id="rAct"><option value="">All activities</option>${acts.map(([c, t]) => `<option value="${esc(c)}" ${c === RS.act ? "selected" : ""}>${esc(t)}</option>`).join("")}</select></label>
+      <label>Class<select id="rCls"><option value="">All classes</option>${classes.map(c => `<option ${c === RS.cls ? "selected" : ""}>${esc(c)}</option>`).join("")}</select></label>
+      <label>Student<input type="text" id="rQ" value="${esc(RS.q)}" placeholder="Search a student"></label></div>
+    <div class="rstats" id="rStats"></div><div id="rGroups"></div>`;
+  $("#rRefresh", m).onclick = () => loadResults(store.get("tkey", ""));
+  $("#rOut", m).onclick = () => { store.set("tkey", ""); RS.data = null; RS.err = ""; RS.tried = true; render(); };
+  $("#rAct", m).onchange = e => { RS.act = e.target.value; paint(); };
+  $("#rCls", m).onchange = e => { RS.cls = e.target.value; paint(); };
+  $("#rQ", m).oninput = e => { RS.q = e.target.value; paint(); };
+  const rowsNow = () => { const q = RS.q.trim().toLowerCase();
+    return all.filter(s => (!RS.cls || String(s.cls) === RS.cls) && (!RS.act || s.code === RS.act) && (!q || String(s.name).toLowerCase().includes(q))); };
+  $("#rCsv", m).onclick = () => {
+    const head = ["Student", "Class", "Activity", "Learn", "Practice stars", "Games", "Quiz %", "Quiz stars", "Total stars", "First seen", "Last active"];
+    const cell = v => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const csv = [head, ...rowsNow().map(s => [s.name, s.cls, s.title, s.learn ? "Yes" : "", s.practice || "", Object.entries(s.games || {}).map(([k, v]) => `${k} (${v})`).join("; "), s.quizPct ?? "", s.quizStars || "", s.total || 0, fmtTime(s.first), fmtTime(s.last)])].map(r => r.map(cell).join(",")).join("\r\n");
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["﻿" + csv], { type: "text/csv" })); a.download = "mathspark-results.csv"; document.body.appendChild(a); a.click(); a.remove();
+  };
+  const chip = (txt, lvl) => `<span class="rchip ${lvl || ""}">${txt}</span>`;
+  const pctLvl = p => p >= 80 ? "good" : p >= 50 ? "" : "low";
+  function paint() {
+    const rows = rowsNow();
+    const people = new Set(rows.map(r => `${r.name}|${r.cls}`.toLowerCase())).size;
+    const fin = rows.filter(r => r.done === 4).length, qz = rows.filter(r => r.steps[3]);
+    const avgQ = qz.length ? Math.round(qz.reduce((a, r) => a + Number(r.quizPct), 0) / qz.length) : null;
+    $("#rStats").innerHTML = [["🧑‍🎓", people, "students"], ["✅", fin, "finished everything"], ["🏆", qz.length, "quizzes done"], ["⭐", avgQ == null ? "–" : avgQ + "%", "average quiz score"]]
+      .map(([i, n, l]) => `<div class="rstat card"><span class="ri">${i}</span><div><b>${n}</b><div class="small">${l}</div></div></div>`).join("");
+    const G = $("#rGroups");
+    if (!all.length) { G.innerHTML = `<div class="notice">No results yet. When students play an activity, they'll show up here.</div>`; return; }
+    if (!rows.length) { G.innerHTML = `<div class="notice">No students match these filters.</div>`; return; }
+    const val = (r, k) => k === "name" ? String(r.name).toLowerCase() : k === "progress" ? r.done : k === "stars" ? Number(r.total) || 0 : k === "quiz" ? (r.steps[3] ? Number(r.quizPct) : -1) : Date.parse(r.last) || 0;
+    const th = (label, k) => `<th><button class="sortbtn ${RS.sort === k ? "on" : ""}" data-sort="${k}">${label}${RS.sort === k ? (RS.dir > 0 ? " ▲" : " ▼") : ""}</button></th>`;
+    const STEP = ["📘 Learn", "✏️ Practice", "🎮 Game", "🏆 Quiz"];
+    const table = list => `<div class="rtable"><table><thead><tr>${th("Student", "name")}${th("Progress", "progress")}${th("Stars", "stars")}${th("Quiz score", "quiz")}<th>Games</th>${th("Last active", "last")}</tr></thead><tbody>${
+      list.slice().sort((a, b) => { const x = val(a, RS.sort), y = val(b, RS.sort); return (x > y ? 1 : x < y ? -1 : 0) * RS.dir; }).map(r => {
+        const id = stuKey(r), open = RS.open[id];
+        const games = Object.entries(r.games || {});
+        let det = "";
+        if (open) {
+          const evs = (D.events || []).filter(e => stuKey(e) === id).sort((a, b) => (Date.parse(b.time) || 0) - (Date.parse(a.time) || 0)).slice(0, 40);
+          det = `<tr class="rdetail"><td colspan="6"><div class="rsteps">${STEP.map((l, i) => `<span class="${r.steps[i] ? "on" : ""}">${r.steps[i] ? "✔" : "○"} ${l}</span>`).join("")}</div>${evs.length ? `<ul class="tl">${evs.map(e => `<li><span class="small">${esc(fmtTime(e.time))}</span> ${esc(e.what)}${e.task && e.task !== "Started" && e.task !== "Learn" && e.task !== "Practice" && e.task !== "Quiz" ? " · " + esc(e.task) : ""}${e.score ? " · " + esc(e.score) : ""}${Number(e.stars) ? " · " + "★".repeat(Math.min(3, Number(e.stars))) : ""}</li>`).join("")}</ul>` : `<div class="small muted">No details yet.</div>`}</td></tr>`;
+        }
+        return `<tr class="rrow ${open ? "open" : ""}" data-id="${esc(id)}" tabindex="0"><td><b>${esc(r.name)}</b> <span class="caret">${open ? "▴" : "▾"}</span></td>
+          <td><div class="pbar"><i style="width:${r.done * 25}%"></i></div><span class="small muted">${r.done} / 4 parts</span></td>
+          <td>${chip("★ " + (r.total || 0), r.total >= 8 ? "good" : r.total >= 3 ? "" : "low")}</td>
+          <td>${r.steps[3] ? chip(r.quizPct + "%", pctLvl(r.quizPct)) : `<span class="muted">–</span>`}</td>
+          <td class="gicons">${games.length ? games.map(([k, v]) => `<span title="${esc(k)}: ${v} ★">${GAME_ICON[k] || "🎮"}</span>`).join("") : `<span class="muted">–</span>`}</td>
+          <td class="small" title="${esc(fmtTime(r.last))}">${esc(ago(r.last))}</td></tr>${det}`;
+      }).join("")}</tbody></table></div>`;
+    const byClass = {}; rows.forEach(r => { const c = String(r.cls || "").trim() || "—"; (byClass[c] = byClass[c] || []).push(r); });
+    G.innerHTML = Object.keys(byClass).sort((a, b) => a === "—" ? 1 : b === "—" ? -1 : a.localeCompare(b, undefined, { numeric: true })).map(c => {
+      const list = byClass[c], closed = RS.open["cls:" + c] === false;
+      const byAct = {}; list.forEach(r => (byAct[r.code] = byAct[r.code] || { title: r.title, rows: [] }).rows.push(r));
+      const codes = Object.keys(byAct).sort((a, b) => Math.max(...byAct[b].rows.map(r => Date.parse(r.last) || 0)) - Math.max(...byAct[a].rows.map(r => Date.parse(r.last) || 0)));
+      const nStu = new Set(list.map(r => String(r.name).toLowerCase())).size;
+      return `<section class="rclass"><button class="rclass-head" data-cls="${esc(c)}"><span class="cbadge">${esc(c.slice(0, 4))}</span><h2>Class ${esc(c)}</h2><span class="spacer"></span>
+          <span class="small">${nStu} student${nStu === 1 ? "" : "s"} · ${codes.length} activit${codes.length === 1 ? "y" : "ies"}</span><span class="caret">${closed ? "▸" : "▾"}</span></button>
+        ${closed ? "" : codes.map(code => { const g = byAct[code], rs = g.rows, q = rs.filter(r => r.steps[3]);
+          const av = q.length ? Math.round(q.reduce((a, r) => a + Number(r.quizPct), 0) / q.length) : null;
+          return `<div class="ract card"><div class="ract-head"><div><div class="eyebrow">Activity</div><h3>${esc(g.title)}</h3></div><span class="spacer"></span>
+            ${chip(rs.length + " student" + (rs.length === 1 ? "" : "s"))}${chip(rs.filter(r => r.done === 4).length + " finished", "good")}${chip(q.length + " did the quiz")}${av != null ? chip("Quiz avg " + av + "%", pctLvl(av)) : ""}</div>${table(rs)}</div>`; }).join("")}</section>`;
+    }).join("");
+    $$("[data-sort]", G).forEach(b => b.onclick = () => { const k = b.dataset.sort; if (RS.sort === k) RS.dir = -RS.dir; else { RS.sort = k; RS.dir = k === "name" ? 1 : -1; } paint(); });
+    $$(".rrow", G).forEach(tr => { tr.onclick = () => { RS.open[tr.dataset.id] = !RS.open[tr.dataset.id]; paint(); }; tr.onkeydown = e => { if (e.key === "Enter") tr.click(); }; });
+    $$("[data-cls]", G).forEach(b => b.onclick = () => { const k = "cls:" + b.dataset.cls; RS.open[k] = RS.open[k] === false ? true : false; paint(); });
+  }
+  paint();
+}
+
 /* ===================== share & results (teacher) ===================== */
 function renderShare(m) {
   if (!isTeacher()) { m.innerHTML = `<div class="card sec muted">Only the teacher can see this page.</div>`; return; }
@@ -1033,7 +1174,7 @@ function renderLearn(p, d) {
     if (!lis.find(l => !l.classList.contains("show"))) { $(`#ans${ci}`, p).classList.remove("hidden"); b.classList.add("hidden"); tone("good"); setGuide("happy", "You solved the example!", "Em đã giải xong ví dụ!"); }
   });
   if (d.playground) renderPlayground($("#pgWrap", p), d.playground);
-  $("#learnDone").onclick = e => { if (!prog(S.current.id).learn) flyStar(e.currentTarget); award("learn", 1); tone("win"); setTimeout(() => { S.tab = "practice"; renderPlayer($("#main")); scrollTo({ top: 0, behavior: "smooth" }); }, 700); };
+  $("#learnDone").onclick = e => { if (!prog(S.current.id).learn) flyStar(e.currentTarget); award("learn", 1); track("learn", { task: "Learn", stars: 1 }); tone("win"); setTimeout(() => { S.tab = "practice"; renderPlayer($("#main")); scrollTo({ top: 0, behavior: "smooth" }); }, 700); };
 }
 function renderFlip(el, pg) {
   const N = pg.total, side = Array(N).fill(0), found = new Set(), goal = N - 1;
@@ -1143,6 +1284,7 @@ function practiceEnd(p, d) {
   if (st >= 2) { confetti(); tone("win"); }
   setGuide(st >= 2 ? "happy" : "think", ...PRAISE[st]);
   const first = P.res.filter(r => r === "star").length;
+  if (!P.sent) { P.sent = true; track("practice", { task: "Practice", score: `${first}/${n} first try`, stars: st, correct: P.res.filter(r => r === "star" || r === "ok").length, total: n }); }
   p.innerHTML = `<div class="card result">${starsHTML(st)}<h2>${bi(PRAISE[st][0], PRAISE[st][1])}</h2>
     <p style="font-weight:800">${bi(`${first} of ${n} right on the first try!`, `Đúng ngay lần đầu ${first} / ${n} câu!`)}</p>
     ${sendBox("Practice", `${first}/${n} first try`, st)}
@@ -1182,6 +1324,7 @@ function gameEnd(p, back, key, stars, en, vi, again) {
   stopAll(); award(null, stars, key); refreshTabs();
   if (stars) confetti(); tone("win"); setGuide(stars >= 2 ? "happy" : "think", ...PRAISE[stars]);
   const gname = (GAMES.find(g => g[0] === key) || [])[2] || "Game";
+  track("game", { task: gname, game: key, score: en, stars });
   p.innerHTML = `<div class="card result">${starsHTML(stars)}<h2>${bi(PRAISE[stars][0], PRAISE[stars][1])}</h2><p style="font-weight:800">${bi(en, vi)}</p>${sendBox("Game: " + gname, en, stars)}
     <div class="actions">${back}<button class="btn btn-primary" id="again">↻ ${bi("Play again", "Chơi lại", true)}</button></div></div>`;
   $("#again", p).onclick = again; bindBack(p);
@@ -1470,7 +1613,7 @@ function renderQuiz(p, d) {
   const path = () => `<div class="path">${Q.order.map((o, i) => `${i ? `<span class="link"></span>` : ""}<span class="stone ${i < Q.picks.length ? (Q.picks[i] === o.q.answer ? "r" : "w") : ""} ${i === Q.i && i >= Q.picks.length ? "cur" : ""}">${i === Math.min(Q.i, Q.order.length - 1) && Q.i < Q.order.length ? `<span class="me">${mascotSVG()}</span>` : ""}${i < Q.picks.length ? (Q.picks[i] === o.q.answer ? "✓" : "✗") : i + 1}</span>`).join("")}<span class="flag">🏁</span></div>`;
   if (Q.i >= qs.length) {
     const right = Q.order.filter((o, i) => Q.picks[i] === o.q.answer).length, pct = Math.round(right / qs.length * 100), st = starsFor(pct);
-    if (!Q.saved) { Q.saved = true; award("quiz", st); refreshTabs(); if (st >= 2) confetti(); tone("win"); setGuide(st >= 2 ? "happy" : "think", ...PRAISE[st]); }
+    if (!Q.saved) { Q.saved = true; track("quiz", { task: "Quiz", score: `${right}/${qs.length} (${pct}%)`, stars: st, correct: right, total: qs.length }); award("quiz", st); refreshTabs(); if (st >= 2) confetti(); tone("win"); setGuide(st >= 2 ? "happy" : "think", ...PRAISE[st]); }
     p.innerHTML = `${path()}<div class="card result"><div class="trophy">${st >= 2 ? "🏆" : "🎖️"}</div>${starsHTML(st)}<h2>${bi(`${right} / ${qs.length} correct`, `Đúng ${right} / ${qs.length} câu`)}</h2><p style="font-weight:800">${bi(PRAISE[st][0], PRAISE[st][1])}</p>
       ${sendBox("Quiz", `${right}/${qs.length} (${pct}%)`, st)}
       <div class="actions"><button class="btn btn-primary" id="qAgain">↻ ${bi("Try again", "Làm lại", true)}</button>${pct < 70 ? `<button class="btn btn-ghost" id="qLearn">📘 ${bi("Review the lesson", "Ôn lại bài", true)}</button>` : ""}<button class="btn btn-ghost" id="qRev">📋 ${bi("Check answers", "Xem đáp án", true)}</button></div>
@@ -1517,6 +1660,9 @@ if (S.embed) {
   S.formUrl = (window.__CONFIG__ && window.__CONFIG__.formUrl) || S.embed.formUrl || "";
   S.current = { id: S.embed.id || "offline", data }; S.view = "player"; S.tab = "learn";
   render(); updateWho(); askName();
+  if (S.student) track("open", { task: "Started" });
+} else if (/^#results$/.test(location.hash)) {
+  $("#nav").classList.add("hidden"); S.view = "results"; render();
 } else {
   S.formUrl = S.lib?.formUrl || "";
   const k = readHash();
